@@ -31,7 +31,7 @@ Verified byte-exact against the Hugging Face API after download:
 
 ```
 models/diffusion_models/minimax_h3_fl2va_int8_convrot.safetensors    34038892334
-models/diffusion_models/minimax_h3_ref2va_int8_convrot.safetensors   34038894550
+models/diffusion_models/minimax_h3_ref2va_pruned_int8_convrot.safetensors 20970379616
 models/text_encoders/qwen3vl_32b_minimax_h3_int8_convrot.safetensors 27141342152
 models/vae/minimax_h3_video_vae_fp16.safetensors                      5207808496
 models/vae/minimax_h3_audio_vae_fp32.safetensors                       605254808
@@ -211,7 +211,21 @@ dynamic VRAM loader. No pruned checkpoint or NVFP4 encoder needed, and no image 
 the 5090 is sm_120, the same architecture as the RTX PRO 6000, so the cu128 build works
 unmodified.
 
-### Ref2VA does not fit on the 5090 — and the limit is host RAM, not VRAM
+### Final configuration
+
+| Mode | Model | GPU | Time | Cost | vs original |
+|---|---|---|---|---|---|
+| I2V | `fl2va_int8_convrot` | RTX 5090 | 411 s | **$0.0788** | **−68%** |
+| Ref2VA | `ref2va_pruned_int8_convrot` | RTX 5090 | 386 s | **$0.0740** | **−72%** |
+
+Both with EasyCache, 768×1024, 124 frames. At 100 clips/month that is $16.45 and $18.73
+saved respectively, against a standing volume cost of $8.40/month.
+
+The pruned Ref2VA checkpoint is visually indistinguishable from the non-pruned one:
+2.56 Mbps against 2.60, with the same detail and no artefacts. Swapping it was necessary
+rather than optional — see below.
+
+### Ref2VA does not fit on the 5090 unpruned — and the limit is host RAM, not VRAM
 
 Ref2VA on the 5090 fails after ~231 s with `ComfyUI HTTP unreachable during websocket
 reconnect`. That message is a symptom; the system log gives the cause:
@@ -233,11 +247,13 @@ ways forward, none yet measured:
 | Option | Effect |
 |---|---|
 | Run Ref2VA on RTX PRO 6000 ($2.09) | Known working at $0.1486; keeps 5090 for I2V |
-| Pruned Ref2VA (19.5 GiB) + NVFP4 encoder (14.6 GiB) | ~39.5 GiB total, should fit — but a quality change |
+| **Pruned Ref2VA (19.5 GiB), encoder unchanged** | **50.2 GiB total — fits, and quality is unchanged. Adopted.** |
 | A tier with more RAM | Needs a per-tier RAM table, which the API does not expose |
 
-The endpoint is left on the 5090, which is correct for I2V. Ref2VA needs the GPU switched
-before use.
+Resolved by swapping in the pruned Ref2VA checkpoint alone: 62.4 → 50.2 GiB of weights,
+which clears the ceiling. The text encoder was deliberately left at INT8 so any quality
+difference would be attributable to the pruned checkpoint rather than to two changes at
+once — and there is none worth reporting.
 
 ### Capacity: trust GraphQL, not the capacity endpoint
 
