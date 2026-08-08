@@ -64,6 +64,29 @@ than retrying once the image went public. Recycling `workersMax` 1 → 0 → 1 d
 and provisioned a healthy replacement. If the image is ever re-tagged or its visibility
 changes, expect to do the same.
 
+## Measured performance
+
+RTX PRO 6000 Blackwell Server Edition, 20 steps, `res_multistep`, 124 frames (5.17 s):
+
+| Job | Pixels | Queue delay | Generation | Output |
+|---|---|---|---|---|
+| 640×384 T2V, cold worker | 246 k | 865 s | 247 s | 0.5 MB |
+| 768×1024 I2V, warm worker | 786 k | **10 s** | 419 s | 1.7 MB |
+
+Two things to take from this:
+
+- **Warm vs cold is 865 s → 10 s.** The cold start is the image pull plus ~62 GiB of
+  weights read off the network volume. It recurs every time the worker scales to zero.
+  `workersMin: 1` removes it entirely at the cost of a continuously billed worker.
+- **Generation scales sub-linearly with pixels**: 3.2× the pixels cost only 1.7× the
+  time. Higher resolutions are better value than the pixel count suggests. Extrapolating,
+  768p×15 s (≈3× the frames) lands near 20 min — comfortably inside the 1800 s execution
+  timeout, but not by much. Raise it before going longer.
+
+Base64 return is viable further than expected: the 768×1024 clip came back as 2.4 MB of
+base64 for a 1.7 MB file, still well inside the 10 MB `/run` cap. S3 becomes necessary
+around 768p/15 s.
+
 ## Outstanding
 
 1. **GHCR package visibility** — the image is private, so workers cannot pull it.
