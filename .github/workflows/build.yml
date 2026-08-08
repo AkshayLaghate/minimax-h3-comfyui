@@ -28,7 +28,6 @@ env:
   # worker-comfyui pinned so a future upstream commit cannot silently change the
   # base out from under a rebuild.
   WORKER_SHA: a1981e99b1f5a7201f387653420ad1f275b97d0a
-  IMAGE: ghcr.io/${{ github.repository_owner }}/minimax-h3-comfyui
 
 jobs:
   build:
@@ -49,6 +48,15 @@ jobs:
                       "$AGENT_TOOLSDIRECTORY" || true
           sudo docker image prune --all --force || true
           echo "after:"; df -h / | tail -1
+
+      # GHCR rejects any uppercase in a repository name, and GitHub owners
+      # commonly have capitals — so derive the image name in lowercase rather
+      # than interpolating github.repository_owner directly.
+      - name: Resolve image name
+        run: |
+          owner=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          echo "IMAGE=ghcr.io/${owner}/minimax-h3-comfyui" >> "$GITHUB_ENV"
+          echo "image: ghcr.io/${owner}/minimax-h3-comfyui"
 
       - name: Checkout this repo
         uses: actions/checkout@v4
