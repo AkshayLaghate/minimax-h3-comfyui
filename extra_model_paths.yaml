@@ -1,0 +1,27 @@
+# Tells ComfyUI to look for models on the RunPod network volume, which mounts at
+# /runpod-volume on a serverless worker. Copied over /comfyui/extra_model_paths.yaml
+# by the Dockerfile.
+#
+# This is a modified copy of worker-comfyui's src/extra_model_paths.yaml. Upstream
+# maps only the legacy `unet:` and `clip:` keys. ComfyUI's folder_paths.map_legacy()
+# rewrites those key NAMES to `diffusion_models` and `text_encoders` — but the PATHS
+# it registers stay models/unet/ and models/clip/. A volume laid out to mirror the
+# Hugging Face repo (models/diffusion_models/, models/text_encoders/) would
+# therefore be silently invisible, showing up as an empty UNETLoader dropdown
+# rather than an error. The last two keys below are the fix.
+
+runpod_worker_comfy:
+  base_path: /runpod-volume
+  checkpoints: models/checkpoints/
+  clip: models/clip/
+  clip_vision: models/clip_vision/
+  configs: models/configs/
+  controlnet: models/controlnet/
+  embeddings: models/embeddings/
+  loras: models/loras/
+  upscale_models: models/upscale_models/
+  vae: models/vae/
+  unet: models/unet/
+  # The two keys upstream omits — required for the MiniMax H3 layout:
+  diffusion_models: models/diffusion_models/
+  text_encoders: models/text_encoders/

@@ -1,0 +1,5 @@
+# The image needs only these two files — model weights live on the network
+# volume, not in the build context.
+*
+!Dockerfile
+!extra_model_paths.yaml
