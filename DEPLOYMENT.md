@@ -211,6 +211,34 @@ dynamic VRAM loader. No pruned checkpoint or NVFP4 encoder needed, and no image 
 the 5090 is sm_120, the same architecture as the RTX PRO 6000, so the cu128 build works
 unmodified.
 
+### Ref2VA does not fit on the 5090 — and the limit is host RAM, not VRAM
+
+Ref2VA on the 5090 fails after ~231 s with `ComfyUI HTTP unreachable during websocket
+reconnect`. That message is a symptom; the system log gives the cause:
+
+```
+INFO: high memory utilization - 44.39GiB / 55.88GiB (79 %)   <- I2V, survives
+INFO: high memory utilization - 51.02GiB / 55.88GiB (91 %)   <- Ref2VA
+WARN: container is unhealthy: triggered memory limits (OOM)
+```
+
+**55.88 GiB is system RAM, not VRAM.** Weights that do not fit in the 32 GB of VRAM are
+offloaded to host RAM, and the 5090 tier allocates ~56 GiB of it. The 62.4 GiB weight set
+plus Ref2VA's reference tensors exceeds that; I2V, with no reference conditioning, stays
+under at 79%.
+
+So the 5090 constraint is the RAM that comes with the tier, not the card's memory. Three
+ways forward, none yet measured:
+
+| Option | Effect |
+|---|---|
+| Run Ref2VA on RTX PRO 6000 ($2.09) | Known working at $0.1486; keeps 5090 for I2V |
+| Pruned Ref2VA (19.5 GiB) + NVFP4 encoder (14.6 GiB) | ~39.5 GiB total, should fit — but a quality change |
+| A tier with more RAM | Needs a per-tier RAM table, which the API does not expose |
+
+The endpoint is left on the 5090, which is correct for I2V. Ref2VA needs the GPU switched
+before use.
+
 ### Capacity: trust GraphQL, not the capacity endpoint
 
 `get-capacity` reports **pod** capacity, not serverless. It advertised RTX 5090 at "Medium"

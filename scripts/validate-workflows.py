@@ -49,8 +49,9 @@ ON_VOLUME = {
     "qwen3vl_32b_minimax_h3_int8_convrot.safetensors",
     "minimax_h3_video_vae_fp16.safetensors",
     "minimax_h3_audio_vae_fp32.safetensors",
-    # Speed LoRA (models/loras/ on the volume)
-    "minimax_h3_turbo_4step_ckpt500_comfyui.safetensors",
+    # NOTE: the Turbo LoRA was on the deleted CA-MTL-3 volume and is NOT on the
+    # EU-RO-1 volume. It was rejected for noise, so it is not re-downloaded;
+    # minimax_h3_i2v_portrait_turbo_api.json will fail until it is.
 }
 
 # Ref2VA's reference inputs are Autogrow TemplatePrefix. Two things bite here:
