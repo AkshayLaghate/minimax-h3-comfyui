@@ -37,6 +37,33 @@ models/vae/minimax_h3_audio_vae_fp32.safetensors                       605254808
 
 Mounts at `/runpod-volume` on a serverless worker, `/workspace` on a Pod.
 
+## Verified smoke test
+
+640×384, 124 frames, 20 steps, `res_multistep` — returned as base64 (no S3 yet):
+
+```
+video: h264  640x384  24 fps  124 frames  5.167s
+audio: aac   32000 Hz  2ch stereo         5.167s
+537,627 bytes
+```
+
+Timings on RTX PRO 6000 Blackwell Server Edition:
+
+| Phase | Time |
+|---|---|
+| Cold start (22.7 GiB image pull + ~62 GiB weights off volume) | 865 s |
+| Generation | 247 s |
+
+The cold start is paid once per worker; it recurs whenever the worker scales to zero,
+which is why `idleTimeout` is 60 s rather than the 5 s default. For latency-sensitive
+use, `workersMin: 1` avoids it entirely at the cost of a permanently billed worker.
+
+A first worker came up **unhealthy**: the endpoint was created while the GHCR package
+was still private, so the pull failed and RunPod kept the worker in that state rather
+than retrying once the image went public. Recycling `workersMax` 1 → 0 → 1 dropped it
+and provisioned a healthy replacement. If the image is ever re-tagged or its visibility
+changes, expect to do the same.
+
 ## Outstanding
 
 1. **GHCR package visibility** — the image is private, so workers cannot pull it.
