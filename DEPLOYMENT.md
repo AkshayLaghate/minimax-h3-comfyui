@@ -6,7 +6,8 @@ re-downloading the 62.4 GiB of weights.
 
 | Resource | ID | Notes |
 |---|---|---|
-| Network volume | `wy4cyuwk18` | `minimax-h3-models`, 120 GB, **CA-MTL-3** |
+| Network volume (active) | `lcfgsk4z8s` | `minimax-h3-eu`, 80 GB, **EU-RO-1** — I2V weights only |
+| Network volume (old) | `wy4cyuwk18` | `minimax-h3-models`, 120 GB, CA-MTL-3 — retained, includes Ref2VA + LoRA |
 | Template | `xmb6e99xm4` | `minimax-h3-comfyui`, 40 GB container disk |
 | Endpoint | `t9u2wy8o9ucnpz` | `minimax-h3` |
 | Image | `ghcr.io/akshaylaghate/minimax-h3-comfyui:0.1.0` | digest `sha256:05f79e38…` |
@@ -15,7 +16,7 @@ Endpoint URL: `https://api.runpod.ai/v2/t9u2wy8o9ucnpz/run`
 
 ## Endpoint configuration
 
-- GPUs: RTX PRO 6000 Blackwell Server Edition ($2.09/hr), A100 80GB PCIe ($1.39/hr)
+- GPU: **RTX 5090 ($0.69/hr), EU-RO-1**
 - Workers: min 0, max 1 · idle timeout 60 s · FlashBoot on
 - Execution timeout: 1800 s (the 600 s default is too short for 768p)
 
@@ -192,6 +193,35 @@ It was dropped anyway, on arithmetic rather than risk. Stacked on EasyCache the 
 already 224 s fixed + ~78 s sampling, so even a 30% attention win returns roughly 279 s
 against 302 s — about 8%. Not worth an image rebuild and a non-default attention path.
 The same fixed-overhead ceiling caps every sampling-side optimisation.
+
+## GPU cost comparison
+
+Identical workload (768×1024, 124 frames, EasyCache, same seed/prompt/image):
+
+| GPU | VRAM | $/hr | Time | Cost | Quality |
+|---|---|---|---|---|---|
+| RTX PRO 6000 Blackwell | 96 GB | $2.09 | 302 s | $0.1753 | 3.46 Mbps |
+| **RTX 5090** | **32 GB** | **$0.69** | 411 s | **$0.0788** | 3.36 Mbps |
+
+**The 5090 is 1.36× slower but 55% cheaper** — $0.097 saved per generation. Break-even was
+3.03×, so it wins comfortably. Quality is indistinguishable by bitrate.
+
+Notably it runs the full 62.4 GiB of weights on 32 GB of VRAM, streaming through ComfyUI's
+dynamic VRAM loader. No pruned checkpoint or NVFP4 encoder needed, and no image change —
+the 5090 is sm_120, the same architecture as the RTX PRO 6000, so the cu128 build works
+unmodified.
+
+### Capacity: trust GraphQL, not the capacity endpoint
+
+`get-capacity` reports **pod** capacity, not serverless. It advertised RTX 5090 at "Medium"
+in CA-MTL-3 where serverless had none — an endpoint pinned there sat at zero workers
+indefinitely. The GraphQL `dataCenters.gpuAvailability` field was correct.
+
+The reliable check is a throwaway probe endpoint: `python:3.11-slim` running
+`nvidia-smi`, no volume, `workersMin: 1`. It confirms real serverless capacity for about
+$0.03. RTX 5090 is serverless-available only in EU-CZ-1, EU-RO-1, EUR-IS-1 and EUR-NO-1.
+
+Throttled workers do **not** bill — only the volumes accrued while one sat throttled.
 
 ## Outstanding
 
