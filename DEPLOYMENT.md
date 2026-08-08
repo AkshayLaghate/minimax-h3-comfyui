@@ -215,11 +215,40 @@ unmodified.
 
 | Mode | Model | GPU | Time | Cost | vs original |
 |---|---|---|---|---|---|
-| I2V | `fl2va_int8_convrot` | RTX 5090 | 411 s | **$0.0788** | **−68%** |
-| Ref2VA | `ref2va_pruned_int8_convrot` | RTX 5090 | 386 s | **$0.0740** | **−72%** |
+| I2V | `fl2va_int8_convrot` | RTX 5090 | 411 s | **$0.1811** | **−55%** |
+| Ref2VA | `ref2va_pruned_int8_convrot` | RTX 5090 | 386 s | **$0.1701** | **−61%** |
 
-Both with EasyCache, 768×1024, 124 frames. At 100 clips/month that is $16.45 and $18.73
+Both with EasyCache, 768×1024, 124 frames. At 100 clips/month that is $22.56 and $26.67
 saved respectively, against a standing volume cost of $8.40/month.
+
+### Price from billing records, not the published pod rate
+
+Serverless bills at a **different, higher rate than the pod price** for the same card.
+`GET /v1/billing/endpoints?grouping=gpuTypeId` gives the truth (amount ÷ timeBilled):
+
+| GPU | Pod price | Actual serverless | Ratio |
+|---|---|---|---|
+| RTX 5090 | $0.69 | **$1.586/hr** | 2.30× |
+| A100 80GB PCIe | $1.39 | $2.725/hr | 1.96× |
+| RTX PRO 6000 Blackwell | $2.09 | **$3.495/hr** | 1.67× |
+
+The multiplier is not constant, so pod prices cannot be used even for ranking. Always
+price from billing.
+
+### A40 is not usable, and would not be cheaper
+
+Two independent disqualifications:
+
+1. **No network volume.** A40 exists only in CA-MTL-1 and EU-SE-1, and neither supports
+   network volumes. None of the 18 storage-capable datacenters offers one. The image
+   carries no weights, so a volume is mandatory.
+2. **It would cost more.** Against the 5090's real $1.586/hr, A40 serverless lands near
+   $0.73–1.01/hr, so it breaks even only below 1.57–2.16× slower. A40 has 2.57× less
+   memory bandwidth (696 vs 1792 GB/s) and 3.34× less FP16 throughput, and this workload
+   is memory-bound — a 2.5–3× slowdown is realistic, making it 30–90% *more* expensive.
+
+A40's 48 GB of VRAM *would* likely run the unpruned Ref2VA (only ~14 GiB offloaded to host
+RAM versus the 5090's ~30 GiB), but that is moot given the above.
 
 The pruned Ref2VA checkpoint is visually indistinguishable from the non-pruned one:
 2.56 Mbps against 2.60, with the same detail and no artefacts. Swapping it was necessary
