@@ -124,9 +124,26 @@ so only the variable under test differs.
 
 | Variant | Steps | Generation | vs baseline | Output | Verdict |
 |---|---|---|---|---|---|
-| Baseline (`res_multistep`) | 20 | 419 s | — | 1.7 MB | reference |
-| **EasyCache** (threshold 0.2) | 20 | **302 s** | **−28%** | 2.1 MB | **clean, adopted** |
+| I2V baseline (`res_multistep`) | 20 | 419 s | — | 1.7 MB | reference |
+| **I2V + EasyCache** (threshold 0.2) | 20 | **302 s** | **−28%** | 2.1 MB | **clean, adopted** |
 | Turbo LoRA (`euler`+`beta`, str 2.0) | 8 | 302 s | −28% | 6.1 MB | **rejected — visible noise** |
+| Ref2VA baseline | 20 | 450 s | — | 1.4 MB | reference |
+| **Ref2VA + EasyCache** | 20 | **256 s** | **−43%** | 1.7 MB | **clean, adopted** |
+
+Cost at $2.09/hr (RTX PRO 6000 Blackwell):
+
+| Run | Time | Cost | Saving |
+|---|---|---|---|
+| I2V baseline | 419 s | $0.2433 | — |
+| I2V + EasyCache | 302 s | $0.1753 | $0.068/run |
+| Ref2VA baseline | 450 s | $0.2612 | — |
+| Ref2VA + EasyCache | 256 s | $0.1486 | **$0.113/run** |
+
+**EasyCache pays off nearly twice as well on Ref2VA (−43%) as on I2V (−28%).** The likely
+reason is that reference conditioning makes consecutive denoising steps more similar, so
+the reuse threshold fires more often — but that is inference from two data points, not a
+measured mechanism. Either way the output stays clean: 2.60 Mbps against the baseline's
+2.05, nowhere near the 9.79 Mbps of the noisy Turbo LoRA run.
 
 ### Sampling is only half the runtime
 
