@@ -1,13 +1,13 @@
 # Live deployment
 
-Resources created on RunPod for this project. Region is fixed by the network
-volume — a volume cannot be moved between datacenters, so changing region means
-re-downloading the 62.4 GiB of weights.
+Resources created on RunPod for this project. Region is fixed by the network volume —
+a volume cannot be moved between datacenters, so changing region means re-downloading the
+weights. In practice that took ~2 minutes at EU-RO-1 speeds, so it is less binding than it
+sounds.
 
 | Resource | ID | Notes |
 |---|---|---|
-| Network volume (active) | `lcfgsk4z8s` | `minimax-h3-eu`, 80 GB, **EU-RO-1** — I2V weights only |
-| Network volume (old) | `wy4cyuwk18` | `minimax-h3-models`, 120 GB, CA-MTL-3 — retained, includes Ref2VA + LoRA |
+| Network volume | `lcfgsk4z8s` | `minimax-h3-eu`, 120 GB, **EU-RO-1** |
 | Template | `xmb6e99xm4` | `minimax-h3-comfyui`, 40 GB container disk |
 | Endpoint | `t9u2wy8o9ucnpz` | `minimax-h3` |
 | Image | `ghcr.io/akshaylaghate/minimax-h3-comfyui:0.1.0` | digest `sha256:05f79e38…` |
@@ -20,10 +20,10 @@ Endpoint URL: `https://api.runpod.ai/v2/t9u2wy8o9ucnpz/run`
 - Workers: min 0, max 1 · idle timeout 60 s · FlashBoot on
 - Execution timeout: 1800 s (the 600 s default is too short for 768p)
 
-CA-MTL-3 is capacity-constrained: only those two GPU types are offered and it has
-no CPU pod availability at all (the volume was filled with an A100 pod for want of
-a cheaper option). If workers become hard to schedule, that is the reason — and the
-fix is a new volume in a different datacenter plus a re-download.
+The deployment originally sat in CA-MTL-3, which offered only two serverless GPU types and
+whose A100 host was broken (see below). Moving to EU-RO-1 unlocked the RTX 5090 and cut
+per-clip cost by more than half. EU-RO-1 also carries RTX PRO 6000 Blackwell and
+A100-SXM4-80GB as fallbacks if 5090 capacity tightens.
 
 ## Volume contents
 
@@ -37,9 +37,9 @@ models/vae/minimax_h3_video_vae_fp16.safetensors                      5207808496
 models/vae/minimax_h3_audio_vae_fp32.safetensors                       605254808
 ```
 
-~94 GiB of 120 GB. Mounts at `/runpod-volume` on a serverless worker.
+~82 GiB of 120 GB. Mounts at `/runpod-volume` on a serverless worker.
 
-## Pods do not work in CA-MTL-3 with this volume
+## Historical: pods did not work in CA-MTL-3 with the old volume
 
 Attaching a network volume restricts placement to hosts that can mount it, and in
 CA-MTL-3 that resolved to a single machine with a broken GPU device node. Every Pod
