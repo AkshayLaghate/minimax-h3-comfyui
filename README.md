@@ -163,8 +163,38 @@ deployment. The constraints they encoded are enforced by the validator instead:
 python scripts/validate-workflows.py
 ```
 
-## Adding Ref2VA later
+## Ref2VA — reference conditioning, including reference audio
 
-Add `diffusion_models/minimax_h3_ref2va_int8_convrot.safetensors` (31.70 GiB) to
-`scripts/populate-volume.sh`, size the volume to ~120 GB, and re-run it on a Pod. No
-image rebuild — which is the main dividend of the volume architecture.
+`minimax_h3_ref2va_int8_convrot.safetensors` is on the volume, driving
+[workflows/minimax_h3_ref2va_api.json](workflows/minimax_h3_ref2va_api.json). It is the
+**only** MiniMax H3 checkpoint that accepts reference audio — FL2VA's
+`MiniMaxH3ImageToVideo` has no audio input at all and derives its soundtrack purely from
+the text prompt.
+
+`MiniMaxH3ReferenceToVideo` adds `audio_vae` plus four reference families:
+`ref_images` (≤9), `ref_videos` (≤3), `ref_video_audios` (≤3) and `ref_audios` (≤3).
+
+Two traps, both enforced by the validator:
+
+- **Wire names are zero-indexed, prompt tags are one-based.** The inputs are Autogrow
+  `TemplatePrefix`, generated as `f"{prefix}{i}" for i in range(max)` — so `ref_image_0`
+  … `ref_image_8`. But the prompt refers to them as `<Picture 1>` … `<Picture 9>`.
+  `<Picture 1>` means `ref_image_0`.
+- **`ref_video_audio_N` pairs with `ref_video_N` by index**, and a soundtrack with no
+  matching video is *silently ignored* rather than raising.
+
+Reference conditioning is about identity, style, motion and voice — it is not
+first-frame animation. To animate a specific frame, use FL2VA's `first_frame`.
+
+### Sending reference audio through the API
+
+No worker changes are needed. ComfyUI's `/upload/image` performs no content-type
+validation and saves by filename, and worker-comfyui uploads with the caller's filename
+(despite hardcoding an `image/png` MIME). So an audio file passed in `input.images`
+lands in ComfyUI's input directory where `LoadAudio` finds it:
+
+```json
+{"input": {"workflow": {...},
+           "images": [{"name": "ref_image.png", "image": "<base64>"},
+                      {"name": "ref_audio.mp3", "image": "<base64>"}]}}
+```

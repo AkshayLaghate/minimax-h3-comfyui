@@ -29,13 +29,37 @@ fix is a new volume in a different datacenter plus a re-download.
 Verified byte-exact against the Hugging Face API after download:
 
 ```
-models/diffusion_models/minimax_h3_fl2va_int8_convrot.safetensors   34038892334
+models/diffusion_models/minimax_h3_fl2va_int8_convrot.safetensors    34038892334
+models/diffusion_models/minimax_h3_ref2va_int8_convrot.safetensors   34038894550
 models/text_encoders/qwen3vl_32b_minimax_h3_int8_convrot.safetensors 27141342152
-models/vae/minimax_h3_video_vae_fp16.safetensors                     5207808496
+models/vae/minimax_h3_video_vae_fp16.safetensors                      5207808496
 models/vae/minimax_h3_audio_vae_fp32.safetensors                       605254808
 ```
 
-Mounts at `/runpod-volume` on a serverless worker, `/workspace` on a Pod.
+~94 GiB of 120 GB. Mounts at `/runpod-volume` on a serverless worker.
+
+## Pods do not work in CA-MTL-3 with this volume
+
+Attaching a network volume restricts placement to hosts that can mount it, and in
+CA-MTL-3 that resolved to a single machine with a broken GPU device node. Every Pod
+crash-looped identically:
+
+```
+error creating device nodes: mount src=/dev/dri/card4 ... no such file or directory
+```
+
+Five attempts across A100 / Blackwell / 4090-class all failed the same way; CPU pods
+returned "no instances available". This is a RunPod infrastructure fault, not a config
+error — and the first volume fill (before this) succeeded on a different host, so it
+appeared mid-project.
+
+**Workaround that works:** serverless placement finds healthy hosts on the same volume.
+To run a one-off command against the volume, scale the production endpoint to
+`workersMax: 0` (to stay inside the 10-worker quota), create a throwaway serverless
+endpoint whose template's `dockerStartCmd` does the work and then sleeps, watch it with
+`stream-worker-logs`, then delete it and restore. The Ref2VA download took 55 s that way
+(~620 MB/s to the volume). Worth retrying a plain Pod first — the broken host may be
+repaired.
 
 ## Verified smoke test
 
