@@ -23,6 +23,7 @@ REQUIRED: dict[str, set[str]] = {
     "CLIPLoader": {"clip_name", "type"},
     "VAELoader": {"vae_name"},
     "LoadImage": {"image"},
+    "LoadAudio": {"audio"},
     "MiniMaxH3ImageToVideo": {"clip", "vae", "prompt", "width", "height", "length"},
     "MiniMaxH3ReferenceToVideo": {"clip", "vae", "audio_vae", "prompt", "width", "height", "length"},
     "MiniMaxH3SigmaShift": {"model", "video_shift", "audio_shift"},
@@ -37,13 +38,25 @@ REQUIRED: dict[str, set[str]] = {
     "SaveVideo": {"video", "filename_prefix", "format", "codec"},
 }
 
-# Exactly what the Dockerfile bakes in. A workflow naming anything else would
-# fail at load time on the worker.
-BAKED = {
+# Exactly what scripts/populate-volume.sh puts on the network volume. A workflow
+# naming anything else shows up as an empty loader dropdown on the worker.
+ON_VOLUME = {
     "minimax_h3_fl2va_int8_convrot.safetensors",
+    "minimax_h3_ref2va_int8_convrot.safetensors",
     "qwen3vl_32b_minimax_h3_int8_convrot.safetensors",
     "minimax_h3_video_vae_fp16.safetensors",
     "minimax_h3_audio_vae_fp32.safetensors",
+}
+
+# Ref2VA's reference inputs are Autogrow TemplatePrefix, whose generated names are
+# ZERO-indexed (`f"{prefix}{i}" for i in range(max)`), so the wire names are
+# ref_image_0..8, ref_video_0..2, ref_video_audio_0..2, ref_audio_0..2. The prompt
+# tags, confusingly, are 1-based: <Picture 1> refers to ref_image_0.
+AUTOGROW_LIMITS = {
+    "ref_image_": 9,
+    "ref_video_": 3,
+    "ref_video_audio_": 3,
+    "ref_audio_": 3,
 }
 
 
@@ -67,10 +80,26 @@ def check(path: str) -> list[str]:
             if isinstance(val, list):
                 if val[0] not in wf:
                     errs.append(f"{nid}.{key}: references non-existent node {val[0]!r}")
-            elif isinstance(val, str) and val.endswith(".safetensors") and val not in BAKED:
-                errs.append(f"{nid}.{key}: {val!r} is not baked into the image")
+            elif isinstance(val, str) and val.endswith(".safetensors") and val not in ON_VOLUME:
+                errs.append(f"{nid}.{key}: {val!r} is not on the network volume")
 
-        if ct == "MiniMaxH3ImageToVideo":
+        if ct == "MiniMaxH3ReferenceToVideo":
+            # ref_video_audio_N is index-paired with ref_video_N by the node, so a
+            # soundtrack without its video is silently ignored rather than erroring.
+            for key in inputs:
+                for prefix, limit in AUTOGROW_LIMITS.items():
+                    if key.startswith(prefix) and key[len(prefix):].isdigit():
+                        idx = int(key[len(prefix):])
+                        if idx >= limit:
+                            errs.append(f"{nid}.{key}: index {idx} exceeds max {limit - 1} for {prefix}*")
+                        break
+            for key in inputs:
+                if key.startswith("ref_video_audio_"):
+                    n = key[len("ref_video_audio_"):]
+                    if f"ref_video_{n}" not in inputs:
+                        errs.append(f"{nid}.{key}: no matching ref_video_{n}; it will be ignored")
+
+        if ct in ("MiniMaxH3ImageToVideo", "MiniMaxH3ReferenceToVideo"):
             length = inputs.get("length")
             if isinstance(length, int) and (length < 5 or (length - 5) % 17):
                 errs.append(

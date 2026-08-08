@@ -20,12 +20,18 @@ MODELS="${VOLUME}/models"
 
 # Mirrors the Hugging Face repo layout exactly, so `--local-dir "$MODELS"` places
 # every file where ComfyUI expects it with no renaming.
+# FL2VA drives T2V / I2V / first-last-frame. Ref2VA is a separate checkpoint for
+# reference conditioning — it is the only one that accepts reference AUDIO.
+# Set REF2VA=0 to skip it and save 31.70 GiB.
 FILES=(
   "vae/minimax_h3_audio_vae_fp32.safetensors"
   "vae/minimax_h3_video_vae_fp16.safetensors"
   "text_encoders/qwen3vl_32b_minimax_h3_int8_convrot.safetensors"
   "diffusion_models/minimax_h3_fl2va_int8_convrot.safetensors"
 )
+if [ "${REF2VA:-1}" = "1" ]; then
+  FILES+=("diffusion_models/minimax_h3_ref2va_int8_convrot.safetensors")
+fi
 
 # Exact byte sizes from the HF API. A truncated download otherwise surfaces as a
 # baffling safetensors parse error on the first inference.
@@ -34,6 +40,7 @@ declare -A SIZES=(
   ["vae/minimax_h3_video_vae_fp16.safetensors"]=5207808496
   ["text_encoders/qwen3vl_32b_minimax_h3_int8_convrot.safetensors"]=27141342152
   ["diffusion_models/minimax_h3_fl2va_int8_convrot.safetensors"]=34038892334
+  ["diffusion_models/minimax_h3_ref2va_int8_convrot.safetensors"]=34038894550
 )
 
 if [ ! -d "$VOLUME" ]; then
@@ -44,10 +51,13 @@ fi
 echo "==> target: $MODELS"
 df -h "$VOLUME" | tail -1
 
-# ~62.4 GiB of weights; leave headroom.
+# 62.4 GiB without Ref2VA, 94.1 GiB with it. Leave headroom.
+need_gb=70
+[ "${REF2VA:-1}" = "1" ] && need_gb=105
 avail_gb=$(df -BG --output=avail "$VOLUME" | tail -1 | tr -dc '0-9')
-if [ "${avail_gb:-0}" -lt 70 ]; then
-  echo "FATAL: only ${avail_gb}G free on $VOLUME; need ~70G." >&2
+if [ "${avail_gb:-0}" -lt "$need_gb" ]; then
+  echo "FATAL: only ${avail_gb}G free on $VOLUME; need ~${need_gb}G." >&2
+  echo "       (set REF2VA=0 to skip the reference checkpoint and need ~70G)" >&2
   exit 1
 fi
 
