@@ -44,13 +44,13 @@
       "clip": ["2", 0],
       "vae": ["3", 0],
       "audio_vae": ["4", 0],
-      "prompt": "The character from <Picture 1> sits in a warm, softly lit room and looks toward the camera, smiling gently. Slow handheld camera with a very slight push-in, no cuts.\n\nUse the voice and musical character of <Audio 1> for the soundtrack.",
+      "prompt": "Keep the two characters, costumes, colours and warm festive room of <Picture 1>. The laughing child offers the pink lotus forward and the little elephant-headed figure sways gently, ears flicking; oil-lamp flames flicker and marigold petals stir. Slow handheld camera with a very slight push-in, no cuts.\n\nMatch the musical style, instrumentation and mood of <Audio 1> for the soundtrack.",
       "width": 768,
       "height": 1024,
       "length": 124,
       "ref_image_size": "match",
-      "ref_image_0": ["15", 0],
-      "ref_audio_0": ["16", 0]
+      "ref_images.ref_image_0": ["15", 0],
+      "ref_audios.ref_audio_0": ["16", 0]
     }
   },
   "6": {

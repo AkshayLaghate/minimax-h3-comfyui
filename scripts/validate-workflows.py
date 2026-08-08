@@ -48,15 +48,30 @@ ON_VOLUME = {
     "minimax_h3_audio_vae_fp32.safetensors",
 }
 
-# Ref2VA's reference inputs are Autogrow TemplatePrefix, whose generated names are
-# ZERO-indexed (`f"{prefix}{i}" for i in range(max)`), so the wire names are
-# ref_image_0..8, ref_video_0..2, ref_video_audio_0..2, ref_audio_0..2. The prompt
-# tags, confusingly, are 1-based: <Picture 1> refers to ref_image_0.
+# Ref2VA's reference inputs are Autogrow TemplatePrefix. Two things bite here:
+#
+#   1. The API key is DOT-PREFIXED by the parent input id. parse_class_inputs()
+#      extends the prefix with the Autogrow input's own id, then
+#      finalize_prefix() joins with ".", so the wire name is
+#      "ref_images.ref_image_0" — NOT "ref_image_0". Passing the bare name fails
+#      at runtime with "execute() got an unexpected keyword argument". The same
+#      shape shows up in stock templates as ComfyMathExpression's "values.a".
+#   2. The generated indices are ZERO-based (`f"{prefix}{i}" for i in range(max)`),
+#      while the prompt tags are ONE-based: <Picture 1> refers to ref_image_0.
 AUTOGROW_LIMITS = {
-    "ref_image_": 9,
-    "ref_video_": 3,
-    "ref_video_audio_": 3,
-    "ref_audio_": 3,
+    "ref_images.ref_image_": 9,
+    "ref_videos.ref_video_": 3,
+    "ref_video_audios.ref_video_audio_": 3,
+    "ref_audios.ref_audio_": 3,
+}
+
+# Bare (un-prefixed) forms are silently accepted by the JSON but rejected by the
+# node at execution time, so flag them explicitly.
+AUTOGROW_BARE = {
+    "ref_image_": "ref_images.ref_image_",
+    "ref_video_audio_": "ref_video_audios.ref_video_audio_",
+    "ref_video_": "ref_videos.ref_video_",
+    "ref_audio_": "ref_audios.ref_audio_",
 }
 
 
@@ -84,20 +99,29 @@ def check(path: str) -> list[str]:
                 errs.append(f"{nid}.{key}: {val!r} is not on the network volume")
 
         if ct == "MiniMaxH3ReferenceToVideo":
+            for key in inputs:
+                # Bare name without the parent prefix — passes JSON validation but
+                # blows up inside execute().
+                for bare, correct in AUTOGROW_BARE.items():
+                    if key.startswith(bare) and key[len(bare):].isdigit():
+                        errs.append(f"{nid}.{key}: missing parent prefix, should be {correct}{key[len(bare):]!s}")
+                        break
+                else:
+                    for prefix, limit in AUTOGROW_LIMITS.items():
+                        if key.startswith(prefix) and key[len(prefix):].isdigit():
+                            idx = int(key[len(prefix):])
+                            if idx >= limit:
+                                errs.append(f"{nid}.{key}: index {idx} exceeds max {limit - 1} for {prefix}*")
+                            break
+
             # ref_video_audio_N is index-paired with ref_video_N by the node, so a
             # soundtrack without its video is silently ignored rather than erroring.
+            va = "ref_video_audios.ref_video_audio_"
             for key in inputs:
-                for prefix, limit in AUTOGROW_LIMITS.items():
-                    if key.startswith(prefix) and key[len(prefix):].isdigit():
-                        idx = int(key[len(prefix):])
-                        if idx >= limit:
-                            errs.append(f"{nid}.{key}: index {idx} exceeds max {limit - 1} for {prefix}*")
-                        break
-            for key in inputs:
-                if key.startswith("ref_video_audio_"):
-                    n = key[len("ref_video_audio_"):]
-                    if f"ref_video_{n}" not in inputs:
-                        errs.append(f"{nid}.{key}: no matching ref_video_{n}; it will be ignored")
+                if key.startswith(va) and key[len(va):].isdigit():
+                    n = key[len(va):]
+                    if f"ref_videos.ref_video_{n}" not in inputs:
+                        errs.append(f"{nid}.{key}: no matching ref_videos.ref_video_{n}; it will be ignored")
 
         if ct in ("MiniMaxH3ImageToVideo", "MiniMaxH3ReferenceToVideo"):
             length = inputs.get("length")

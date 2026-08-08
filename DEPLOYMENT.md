@@ -96,6 +96,12 @@ RTX PRO 6000 Blackwell Server Edition, 20 steps, `res_multistep`, 124 frames (5.
 |---|---|---|---|---|
 | 640×384 T2V, cold worker | 246 k | 865 s | 247 s | 0.5 MB |
 | 768×1024 I2V, warm worker | 786 k | **10 s** | 419 s | 1.7 MB |
+| 768×1024 Ref2VA (image + audio ref), warm | 786 k | 1 s | 450 s | 1.4 MB |
+
+Ref2VA cost only ~7% more than I2V at the same size, despite reference tokens riding
+through every sampling step and a 34 GiB checkpoint swap off the volume — with
+`ref_image_size: "match"`. The `"max"` setting (2048 px short edge) is documented as
+several times slower.
 
 Two things to take from this:
 
