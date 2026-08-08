@@ -18,7 +18,7 @@ Endpoint URL: `https://api.runpod.ai/v2/t9u2wy8o9ucnpz/run`
 
 - GPU: **RTX 5090 ($0.69/hr), EU-RO-1**
 - Workers: min 0, max 1 · idle timeout 60 s · FlashBoot on
-- Execution timeout: 1800 s (the 600 s default is too short for 768p)
+- Execution timeout: **3600 s** (a 15 s clip runs 803 s; 1800 s left too little margin)
 
 The deployment originally sat in CA-MTL-3, which offered only two serverless GPU types and
 whose A100 host was broken (see below). Moving to EU-RO-1 unlocked the RTX 5090 and cut
@@ -295,6 +295,30 @@ The reliable check is a throwaway probe endpoint: `python:3.11-slim` running
 $0.03. RTX 5090 is serverless-available only in EU-CZ-1, EU-RO-1, EUR-IS-1 and EUR-NO-1.
 
 Throttled workers do **not** bill — only the volumes accrued while one sat throttled.
+
+## Clip length scaling
+
+768×1024, EasyCache, RTX 5090:
+
+| Clip | Frames | Time | Cost | Per second of video |
+|---|---|---|---|---|
+| 5.17 s | 124 | 411 s | $0.1811 | $0.0350 |
+| 15.08 s | 362 | 803 s | $0.3536 | $0.0234 |
+
+**2.92× the frames costs only 1.95× the time**, so longer clips are markedly better value
+per second — the same sub-linear scaling seen with resolution, for the same reason: the
+~224 s of fixed overhead is amortised over more output.
+
+362 frames is the maximum on the 17k+5 grid within the model's trained range (124–362);
+360 is not a legal value. Peak host RAM was 66.29 GiB.
+
+### Worker RAM varies by host, not by GPU tier
+
+The same RTX 5090 type in the same datacenter reported **55.88 GiB** on one host and
+**85.68 GiB** on another. The 15 s clip needed 66.29 GiB — it would have OOMed on the
+smaller host. Treat long clips and unpruned checkpoints as **not reliably schedulable**:
+they depend which machine the worker lands on. This is also why pruned Ref2VA is the right
+default even though the unpruned one would fit on a large-RAM host.
 
 ## S3 output (Cloudflare R2)
 
