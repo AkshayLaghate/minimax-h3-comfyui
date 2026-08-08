@@ -305,12 +305,35 @@ Throttled workers do **not** bill — only the volumes accrued while one sat thr
 | 5.17 s | 124 | 411 s | $0.1811 | $0.0350 |
 | 15.08 s | 362 | 803 s | $0.3536 | $0.0234 |
 
-**2.92× the frames costs only 1.95× the time**, so longer clips are markedly better value
-per second — the same sub-linear scaling seen with resolution, for the same reason: the
-~224 s of fixed overhead is amortised over more output.
+**2.92× the frames costs only 1.95× the time** — but see the quality note below; the
+cheaper per-second figure is not usable in practice.
 
 362 frames is the maximum on the 17k+5 grid within the model's trained range (124–362);
 360 is not a legal value. Peak host RAM was 66.29 GiB.
+
+### 362 frames drifts — stitch two 175-frame segments instead
+
+At 362 frames the scene **wanders away from the conditioning image**: by 12.5 s the camera
+has pulled back, the room has restyled and the costumes have changed. It is not artefact
+noise — per-frame bitrate *falls* over the clip (23.6 → 18.3 kB), so the scene is getting
+smoother, not corrupted. EasyCache is not the cause; it stays enabled in the working
+configuration below.
+
+At **175 frames (7.29 s)** composition holds exactly — the final frame is the input image
+with the action advanced, no drift.
+
+To reach ~15 s, generate two 175-frame segments and pass **segment 1's final frame as
+segment 2's `first_frame`**. Measured: the join reproduces the handoff frame to within a
+3.3% mean pixel difference.
+
+| Approach | Length | Time | Cost | Quality |
+|---|---|---|---|---|
+| Single clip, 362 frames | 15.08 s | 803 s | $0.3536 | drifts badly |
+| **Two 175-frame segments** | **14.58 s** | **770 s** | **$0.3394** | **holds** |
+
+The stitched route is both cheaper and better. Caveat: each segment generates its own
+audio, so the soundtrack changes character at the seam — replace with a single audio bed
+if that matters.
 
 ### Worker RAM varies by host, not by GPU tier
 
