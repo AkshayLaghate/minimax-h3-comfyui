@@ -52,10 +52,18 @@ if [ "${avail_gb:-0}" -lt 70 ]; then
 fi
 
 # hf_transfer gives multi-threaded chunked downloads, which matters when one file
-# is 31 GiB. huggingface-cli resumes automatically, so a re-run after an
-# interruption picks up where it stopped rather than restarting.
+# is 31 GiB. Downloads resume automatically, so a re-run after an interruption
+# picks up where it stopped rather than restarting.
 pip install --quiet --upgrade "huggingface_hub<1.0" hf_transfer
 export HF_HUB_ENABLE_HF_TRANSFER=1
+
+# `huggingface-cli` is deprecated in favour of `hf`, but `hf` only exists in
+# newer huggingface_hub. Pick whichever this environment actually has.
+if command -v hf >/dev/null 2>&1; then
+  HF_DL=(hf download)
+else
+  HF_DL=(huggingface-cli download)
+fi
 
 mkdir -p "$MODELS"
 
@@ -67,7 +75,7 @@ for f in "${FILES[@]}"; do
     continue
   fi
   echo "==> downloading $f"
-  huggingface-cli download "$REPO" "$f" --local-dir "$MODELS"
+  "${HF_DL[@]}" "$REPO" "$f" --local-dir "$MODELS"
 done
 
 rm -rf "${MODELS}/.cache"
