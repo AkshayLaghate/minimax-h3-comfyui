@@ -10,7 +10,7 @@ image-to-video with native 32 kHz stereo audio — as a RunPod serverless endpoi
 | Text encoder | `qwen3vl_32b_minimax_h3_int8_convrot.safetensors` (25.28 GiB) |
 | VAEs | `minimax_h3_video_vae_fp16` (4.85 GiB) + `minimax_h3_audio_vae_fp32` (0.56 GiB) |
 | ComfyUI | v0.30.0 — the release that added MiniMax H3 |
-| Worker image | ~11 GiB (no weights) |
+| Worker image | 22.7 GiB on disk / ~11 GiB compressed (no weights) |
 | Weights | ~62.4 GiB on a RunPod network volume |
 | GPU | 80 GB tier — H100 / A100 80GB / H200 |
 | Output | `.mp4` (H.264 + AAC) via S3 |
@@ -81,8 +81,13 @@ an empty `UNETLoader` dropdown rather than an error. Our copy adds the two expli
 ## Deploy
 
 **1. Build the image** — Actions tab → *Build worker image* → *Run workflow*.
-Produces `ghcr.io/<owner>/minimax-h3-comfyui:0.1.0` (~11 GiB). Make the package public,
-or add registry credentials to RunPod.
+Produces `ghcr.io/<owner>/minimax-h3-comfyui:0.1.0`. Takes ~20 min, most of it the base
+build. GHCR requires the image name to be lowercase, which the workflow handles.
+
+Because this repo is private the package is too, so either make the package public
+(Packages → minimax-h3-comfyui → Package settings → Change visibility) or add GHCR
+credentials to RunPod under Settings → Container Registry Auth. The image holds only
+ComfyUI — no weights, no secrets.
 
 **2. Create the network volume** — ≥ **80 GB**, in a datacenter that has 80 GB GPUs.
 The endpoint is pinned to the volume's datacenter, so this choice constrains GPU
@@ -104,7 +109,7 @@ interrupted. Terminate the Pod afterwards.
 | Image | `ghcr.io/<owner>/minimax-h3-comfyui:0.1.0` | |
 | Network volume | the one from step 2 | Mounts at `/runpod-volume` |
 | GPU | 80 GB — select several types | ~62 GiB of weights plus activations |
-| Container disk | 20 GB | Only the image needs to fit |
+| Container disk | 40 GB | The image unpacks to 22.7 GiB; 20 GB will fail to pull |
 | Execution timeout | well above the 600 s default | A 768p clip exceeds 10 minutes |
 | Idle timeout | 60–120 s | Avoids re-reading weights from the volume |
 | Env | `BUCKET_ENDPOINT_URL`, `BUCKET_ACCESS_KEY_ID`, `BUCKET_SECRET_ACCESS_KEY` | |
