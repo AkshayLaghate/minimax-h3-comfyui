@@ -28,6 +28,9 @@ REQUIRED: dict[str, set[str]] = {
     "MiniMaxH3ReferenceToVideo": {"clip", "vae", "audio_vae", "prompt", "width", "height", "length"},
     "MiniMaxH3SigmaShift": {"model", "video_shift", "audio_shift"},
     "BasicGuider": {"model", "conditioning"},
+    "EasyCache": {"model", "reuse_threshold", "start_percent", "end_percent"},
+    "LazyCache": {"model", "reuse_threshold", "start_percent", "end_percent"},
+    "LoraLoaderModelOnly": {"model", "lora_name", "strength_model"},
     "KSamplerSelect": {"sampler_name"},
     "BasicScheduler": {"model", "scheduler", "steps", "denoise"},
     "RandomNoise": {"noise_seed"},
@@ -46,6 +49,8 @@ ON_VOLUME = {
     "qwen3vl_32b_minimax_h3_int8_convrot.safetensors",
     "minimax_h3_video_vae_fp16.safetensors",
     "minimax_h3_audio_vae_fp32.safetensors",
+    # Speed LoRA (models/loras/ on the volume)
+    "minimax_h3_turbo_4step_ckpt500_comfyui.safetensors",
 }
 
 # Ref2VA's reference inputs are Autogrow TemplatePrefix. Two things bite here:
