@@ -30,3 +30,21 @@ RUN test -f /comfyui/comfy_extras/nodes_minimax_h3.py \
 # silently not be found, and UNETLoader would show an empty dropdown. Our version
 # adds the two explicit keys.
 COPY extra_model_paths.yaml /comfyui/extra_model_paths.yaml
+
+# SageAttention, opt-in via COMFY_EXTRA_ARGS (see start.sh) rather than baked on.
+#
+# Deliberately the PyPI package, which is SageAttention *1.x* — Triton-based, with
+# no FP8 PV kernel. That matters: ComfyUI issue #15263 documents `--use-sage-attention`
+# auto-dispatching to an FP8 PV kernel on sm_120 (our RTX PRO 6000), where accumulation
+# error turns MiniMax H3 output into pure noise past ~160k tokens — silently, after a
+# full sampling run. SageAttention 2.x would reintroduce that kernel and would also mean
+# a third-party prebuilt wheel; 1.x sidesteps both by construction.
+#
+# ComfyUI wraps the sageattn call in try/except and falls back to PyTorch attention on
+# error, so an unsupported arch degrades rather than crashes.
+RUN uv pip install sageattention
+
+# Upstream's start.sh hardcodes ComfyUI's arguments. Ours appends ${COMFY_EXTRA_ARGS}
+# so flags can be toggled per-endpoint without rebuilding the image.
+COPY start.sh /start.sh
+RUN chmod +x /start.sh
