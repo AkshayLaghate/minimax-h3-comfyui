@@ -117,6 +117,59 @@ Base64 return is viable further than expected: the 768×1024 clip came back as 2
 base64 for a 1.7 MB file, still well inside the 10 MB `/run` cap. S3 becomes necessary
 around 768p/15 s.
 
+## Speed-up experiments
+
+All three runs use an identical seed, prompt and first frame at 768×1024 / 124 frames,
+so only the variable under test differs.
+
+| Variant | Steps | Generation | vs baseline | Output | Verdict |
+|---|---|---|---|---|---|
+| Baseline (`res_multistep`) | 20 | 419 s | — | 1.7 MB | reference |
+| **EasyCache** (threshold 0.2) | 20 | **302 s** | **−28%** | 2.1 MB | **clean, adopted** |
+| Turbo LoRA (`euler`+`beta`, str 2.0) | 8 | 302 s | −28% | 6.1 MB | **rejected — visible noise** |
+
+### Sampling is only half the runtime
+
+Two points with the same everything except step count give the cost model:
+
+```
+per-step cost  :   9.8 s
+fixed overhead : 223.8 s   (53% of the baseline run)
+```
+
+Fixed overhead is weight staging, text encoding through a 32B Qwen3-VL, and VAE-decoding
+124 frames. **It sets a hard floor of ~224 s no matter how few steps you sample**, so
+step-count reductions have sharply diminishing returns:
+
+| Steps | Predicted |
+|---|---|
+| 20 | 419 s |
+| 8 | 302 s |
+| 4 | 263 s |
+| 0 | 224 s |
+
+This is why the Turbo LoRA disappoints here despite a genuine ~2.5× reduction in sampling
+work: it can only attack the 47% that is sampling. EasyCache reaches the same wall-clock
+without touching quality, because it skips redundant steps adaptively rather than
+shortening the schedule.
+
+### Turbo LoRA quality
+
+At strength 2.0 / 8 steps the output carries heavy speckle across every frame — the 6.1 MB
+file at 9.8 Mbps is noise, not detail (the clean baseline is ~2.8 Mbps). Composition and
+motion survive; the texture does not. Lower strength (~1.0) and 10 steps might recover it,
+but the ceiling is ~283 s against EasyCache's already-clean 302 s, so there is little to
+win. The LoRA stays on the volume for future experiments.
+
+### Not pursued: SageAttention
+
+`--use-sage-attention` is actively dangerous on this deployment. ComfyUI issue
+[#15263](https://github.com/Comfy-Org/ComfyUI/issues/15263) documents the global flag
+auto-dispatching to an FP8 PV kernel on sm_120 — our GPU — whose accumulation error turns
+output into pure noise past ~160k tokens, silently, after full sampling time. The safe
+route is KJNodes' `Patch Sage Attention KJ` pinned to `sageattn_qk_int8_pv_fp16_cuda`,
+which needs a custom node plus a third-party sm_120 wheel.
+
 ## Outstanding
 
 1. **GHCR package visibility** — the image is private, so workers cannot pull it.
