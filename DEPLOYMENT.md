@@ -296,17 +296,48 @@ $0.03. RTX 5090 is serverless-available only in EU-CZ-1, EU-RO-1, EUR-IS-1 and E
 
 Throttled workers do **not** bill — only the volumes accrued while one sat throttled.
 
+## S3 output (Cloudflare R2)
+
+Verified: outputs return `type: "s3_url"` with a working presigned link.
+
+| Variable | Value |
+|---|---|
+| `BUCKET_ENDPOINT_URL` | `https://<account>.r2.cloudflarestorage.com` — **service root only** |
+| `BUCKET_NAME` | `runpod` |
+| `AWS_DEFAULT_REGION` | `auto` |
+| `BUCKET_ACCESS_KEY_ID` / `BUCKET_SECRET_ACCESS_KEY` | R2 API token |
+
+Object key is `{bucket}/{job_id}/{uuid8}.mp4`; the URL is presigned for **7 days**
+(`X-Amz-Expires=604800`).
+
+### Four traps, all of which fail silently
+
+1. **The bucket name is date-derived.** worker-comfyui calls
+   `rp_upload.upload_image(job_id, path)` with no bucket, and the SDK falls back to
+   `time.strftime("%m-%y")` — writing to a bucket named `08-26`, then `09-26` from
+   1 September. There is no `BUCKET_NAME` in the SDK, so the Dockerfile patches the call
+   site; the build asserts the patch applied.
+2. **`BUCKET_ENDPOINT_URL` must not include the bucket.** boto3 appends the bucket itself,
+   so a bucket-qualified endpoint produces `/runpod/runpod/<key>` and NoSuchBucket.
+3. **R2 needs `AWS_DEFAULT_REGION`.** The SDK derives the region by string-matching the
+   endpoint for `.s3.` or `.digitaloceanspaces.com`. An R2 host matches neither, so it
+   passes `region_name=None` and boto3 raises `NoRegionError`. Setting the env var is
+   enough; no code change.
+4. **RunPod's own S3 storage cannot be used here.** Its API does not support presigned
+   URLs, so `put_object` would succeed and the handler would return a link that 403s —
+   success reported, output unreachable.
+
+`HEAD` on the returned URL returns 403 and that is correct: it is signed for `get_object`
+only. Use `GET`. Content-Type is `image/mp4` because the SDK hardcodes
+`"image/" + extension`; harmless for storage, but browsers download rather than preview.
+
 ## Outstanding
 
 1. **GHCR package visibility** — the image is private, so workers cannot pull it.
    Flip at
    `https://github.com/users/AkshayLaghate/packages/container/minimax-h3-comfyui/settings`
    → Change visibility → Public. Repo stays private.
-2. **S3 environment variables** — add `BUCKET_ENDPOINT_URL`, `BUCKET_ACCESS_KEY_ID`,
-   `BUCKET_SECRET_ACCESS_KEY` to the endpoint in the RunPod console. Without them the
-   handler returns base64, capped at 10 MB (`/run`) / 20 MB (`/runsync`). A 384p 5 s
-   smoke test fits under that, so the pipeline can be validated before S3 is set up,
-   but anything larger needs it.
+2. ~~S3 environment variables~~ — **done**, see below.
 
 ## Quota note
 
