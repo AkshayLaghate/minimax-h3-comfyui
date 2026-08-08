@@ -168,7 +168,13 @@ win. The LoRA stays on the volume for future experiments.
 auto-dispatching to an FP8 PV kernel on sm_120 — our GPU — whose accumulation error turns
 output into pure noise past ~160k tokens, silently, after full sampling time. The safe
 route is KJNodes' `Patch Sage Attention KJ` pinned to `sageattn_qk_int8_pv_fp16_cuda`,
-which needs a custom node plus a third-party sm_120 wheel.
+which needs a custom node plus a third-party sm_120 wheel. (SageAttention 1.x from PyPI
+would avoid both, being Triton-based with no FP8 PV kernel at all.)
+
+It was dropped anyway, on arithmetic rather than risk. Stacked on EasyCache the runtime is
+already 224 s fixed + ~78 s sampling, so even a 30% attention win returns roughly 279 s
+against 302 s — about 8%. Not worth an image rebuild and a non-default attention path.
+The same fixed-overhead ceiling caps every sampling-side optimisation.
 
 ## Outstanding
 
