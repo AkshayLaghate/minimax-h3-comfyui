@@ -30,3 +30,23 @@ RUN test -f /comfyui/comfy_extras/nodes_minimax_h3.py \
 # silently not be found, and UNETLoader would show an empty dropdown. Our version
 # adds the two explicit keys.
 COPY extra_model_paths.yaml /comfyui/extra_model_paths.yaml
+
+# Let BUCKET_NAME choose the S3 bucket.
+#
+# worker-comfyui calls rp_upload.upload_image(job_id, path) with no bucket, and the
+# RunPod SDK then falls back to `time.strftime("%m-%y")` — so it writes to a bucket
+# literally named "08-26" and silently starts looking for "09-26" on the 1st of next
+# month. There is no BUCKET_NAME support in the SDK, so patch the call site: the env
+# var wins when set, and an unset value passes None, preserving upstream behaviour.
+#
+# The build fails loudly if upstream ever changes that line, rather than shipping an
+# image where S3 quietly reverts to date-named buckets.
+RUN sed -i \
+      's|rp_upload.upload_image(job_id, temp_file_path)|rp_upload.upload_image(job_id, temp_file_path, bucket_name=os.environ.get("BUCKET_NAME") or None)|' \
+      /handler.py \
+    && grep -q 'bucket_name=os.environ.get("BUCKET_NAME")' /handler.py \
+    || (echo "FATAL: BUCKET_NAME patch did not apply — upstream handler.py changed" >&2 && exit 1)
+
+# Sanity-check the patched file still parses.
+RUN python -c "import ast,sys; ast.parse(open('/handler.py').read())" \
+    && echo "handler.py patched and parses"
