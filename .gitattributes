@@ -1,0 +1,7 @@
+# These are executed on Linux (RunPod Pods, CI runners). CRLF would break the
+# shebang with a "bad interpreter" error that reads as a missing file.
+*.sh text eol=lf
+*.py text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+Dockerfile text eol=lf
