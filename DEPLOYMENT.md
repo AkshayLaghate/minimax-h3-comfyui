@@ -530,6 +530,51 @@ of a landscape source keeps only ~31% of its width.
 | **Native + local upscale** | ~460 s | **~$0.20** | 1080x1920, clean |
 | Direct 1088x1920 | 754.7 s | $0.332 | **nothing — OOM** |
 
+## The pipeline: generate remote, upscale local
+
+```bash
+python scripts/pipeline.py --batch batches/vertical-example.json          # several clips
+python scripts/pipeline.py -w workflows/minimax_h3_i2v_vertical_640x1120_api.json \
+       -f input/first_frame_640x1120.png --seeds 11,12,13                 # N takes, one worker
+python scripts/pipeline.py --batch batches/vertical-example.json --dry-run  # spend nothing
+```
+
+Submits, polls, downloads, upscales locally and prints a cost table.
+
+### Where the money actually goes
+
+Not the upscale — that has run locally since the in-graph `ImageScale` was removed, and
+costs nothing. A job's execution time splits roughly:
+
+```
+~250 s   staging 50-62 GiB of weights off the network volume
+~200-350 s   sampling and decoding
+```
+
+The 768x1344 run makes it visible: container start 07:57:43, first memory activity
+08:01:50 — **247 s before sampling began**. It is also why 640x1120 measured 488.7 s
+against the old 768x1024's 411 s despite having *fewer* pixels: the 411 s was on an
+already-warm worker.
+
+**Running clips one at a time pays that staging cost every time.** Jobs sharing a
+checkpoint are therefore submitted together; with `workersMax: 1` they queue and run back
+to back on one worker. Three clips go from ~3x(250+300) s to ~250+3x300 s — roughly a
+third off. Grouping is automatic, keyed on each workflow's `UNETLoader.unet_name`.
+
+Measured 2026-08-09: 5085.3 s billed at $1.585/hr = $2.2393, against ~2328 s of successful
+generation. The gap is staging, cold starts, failed runs and idle time.
+
+### Two things the pipeline does that are easy to forget
+
+1. **Cycles workers to zero between checkpoint groups.** A job asking for a different
+   `unet_name` than the worker last loaded OOMs during model load.
+2. **Leaves the endpoint at zero workers**, in a `finally` block. A worker left available
+   was observed spinning up unprompted with nothing queued, billing for nothing. It also
+   drops the worker before the local upscale, which takes minutes.
+
+`--dry-run` prints the grouping, canvas, frame count, seed, payload size and input
+existence for every job without touching the endpoint.
+
 ### 10 s Ref2VA fits where 10 s I2V would not
 
 Ref2VA loads the **pruned** Ref2VA checkpoint (19.53 GiB) rather than the full FL2VA

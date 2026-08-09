@@ -1,0 +1,20 @@
+[
+  {
+    "name": "ganesh_i2v_a",
+    "workflow": "workflows/minimax_h3_i2v_vertical_640x1120_api.json",
+    "files": ["input/first_frame_640x1120.png"],
+    "seed": 21
+  },
+  {
+    "name": "ganesh_i2v_b",
+    "workflow": "workflows/minimax_h3_i2v_vertical_640x1120_api.json",
+    "files": ["input/first_frame_640x1120.png"],
+    "seed": 22
+  },
+  {
+    "name": "ganesh_ref2va_10s",
+    "workflow": "workflows/minimax_h3_ref2va_vertical_10s_api.json",
+    "files": ["input/ref_image_640x1120.png", "input/ref_audio.mp3"],
+    "seed": 21
+  }
+]
