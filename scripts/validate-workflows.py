@@ -39,16 +39,28 @@ REQUIRED: dict[str, set[str]] = {
     "VAEDecodeAudio": {"samples", "vae"},
     "CreateVideo": {"images", "fps"},
     "SaveVideo": {"video", "filename_prefix", "format", "codec"},
+    "ImageScale": {"image", "upscale_method", "width", "height", "crop"},
+    "UpscaleModelLoader": {"model_name"},
+    "ImageUpscaleWithModel": {"upscale_model", "image"},
 }
+
+# H3's native canvas is a 768 px short edge, capped at 768x1344 (1.03 MP) — see
+# DEPLOYMENT.md. Exceeding it is not an error (the node accepts up to
+# MAX_RESOLUTION) but it puts the sampler outside the trained distribution, which
+# is the same failure mode as the 362-frame drift. Warn, don't fail.
+NATIVE_SHORT_EDGE = 768
+NATIVE_MAX_PIXELS = 768 * 1344
 
 # Exactly what scripts/populate-volume.sh puts on the network volume. A workflow
 # naming anything else shows up as an empty loader dropdown on the worker.
 ON_VOLUME = {
     "minimax_h3_fl2va_int8_convrot.safetensors",
+    "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
     "minimax_h3_ref2va_pruned_int8_convrot.safetensors",
     "qwen3vl_32b_minimax_h3_int8_convrot.safetensors",
     "minimax_h3_video_vae_fp16.safetensors",
     "minimax_h3_audio_vae_fp32.safetensors",
+    "RealESRGAN_x2plus.pth",
     # NOTE: the Turbo LoRA was on the deleted CA-MTL-3 volume and is NOT on the
     # EU-RO-1 volume. It was rejected for noise, so it is not re-downloaded;
     # minimax_h3_i2v_portrait_turbo_api.json will fail until it is.
@@ -81,10 +93,11 @@ AUTOGROW_BARE = {
 }
 
 
-def check(path: str) -> list[str]:
+def check(path: str) -> tuple[list[str], list[str]]:
     with open(path, encoding="utf-8") as fh:
         wf = json.load(fh)
     errs: list[str] = []
+    warns: list[str] = []
 
     for nid, node in wf.items():
         ct = node.get("class_type")
@@ -101,7 +114,7 @@ def check(path: str) -> list[str]:
             if isinstance(val, list):
                 if val[0] not in wf:
                     errs.append(f"{nid}.{key}: references non-existent node {val[0]!r}")
-            elif isinstance(val, str) and val.endswith(".safetensors") and val not in ON_VOLUME:
+            elif isinstance(val, str) and val.endswith((".safetensors", ".pth")) and val not in ON_VOLUME:
                 errs.append(f"{nid}.{key}: {val!r} is not on the network volume")
 
         if ct == "MiniMaxH3ReferenceToVideo":
@@ -141,11 +154,26 @@ def check(path: str) -> list[str]:
                 if isinstance(v, int) and v % 32:
                     errs.append(f"{nid}: {dim} {v} is not a multiple of 32")
 
-    saves = [n for n, x in wf.items() if x.get("class_type") == "SaveVideo"]
-    if len(saves) != 1:
-        errs.append(f"expected exactly 1 SaveVideo node, found {len(saves)}")
+            w, h = inputs.get("width"), inputs.get("height")
+            if isinstance(w, int) and isinstance(h, int):
+                if min(w, h) > NATIVE_SHORT_EDGE:
+                    warns.append(
+                        f"{nid}: short edge {min(w, h)} exceeds H3's native {NATIVE_SHORT_EDGE} px "
+                        f"- outside the trained canvas; upscale a native render instead"
+                    )
+                elif w * h > NATIVE_MAX_PIXELS:
+                    warns.append(
+                        f"{nid}: {w}x{h} is {w * h / 1e6:.2f} MP, above the native "
+                        f"{NATIVE_MAX_PIXELS / 1e6:.2f} MP cap (768x1344)"
+                    )
 
-    return errs
+    # Run A saves the native master alongside the 1080p deliverable, so more than
+    # one SaveVideo is legitimate. Zero is not — the handler would return nothing.
+    saves = [n for n, x in wf.items() if x.get("class_type") == "SaveVideo"]
+    if not saves:
+        errs.append("no SaveVideo node - the job would produce no output")
+
+    return errs, warns
 
 
 def main() -> int:
@@ -157,7 +185,7 @@ def main() -> int:
 
     failed = False
     for path in paths:
-        errs = check(path)
+        errs, warns = check(path)
         name = os.path.basename(path)
         if errs:
             failed = True
@@ -166,6 +194,8 @@ def main() -> int:
                 print(f"   - {e}")
         else:
             print(f"PASS {name}")
+        for w in warns:
+            print(f"   ! {w}")
     return 1 if failed else 0
 
 

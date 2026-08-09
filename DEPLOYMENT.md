@@ -335,6 +335,130 @@ The stitched route is both cheaper and better. Caveat: each segment generates it
 audio, so the soundtrack changes character at the seam — replace with a single audio bed
 if that matters.
 
+## 1080p: the model cannot generate it, and neither can MiniMax
+
+**H3's native canvas is a 768 px short edge, capped at 768x1344 (1.03 MP)**, rounded to a
+multiple of 32 — the `EmptyMiniMaxH3LatentAV` / `MiniMaxH3ImageToVideo` defaults are
+`1344x768`, and ComfyUI's tutorial says to raise Megapixels "to about 1.0 at 16:9" for full
+quality.
+
+The decisive evidence is not the documentation but what MiniMax withheld: their 2K output
+comes from **`H3-Regenerate-2K`, a separate upscaling module that was not open-sourced**.
+The Comfy blog's "output runs to 2K" describes the hosted product, not this checkpoint.
+Even the model's authors reach 2K by upscaling a 768p render. So does this deployment.
+
+Two consequences worth internalising:
+
+- **768x1024 was already exactly the native canvas at 3:4.** Nothing was being left on the
+  table. More native pixels are only available by going wider — 768x1344 at 9:16, or
+  1344x768 at 16:9, both ~1.03 MP.
+- There is no exact-9:16 canvas on the x32 grid below a 768 short edge worth using: the
+  largest is 576x1024 (0.59 MP), *fewer* pixels than 768x1024. Use **768x1344** (4:7) and
+  let `ImageScale` with `crop="center"` shave 1.6% of the width on the way to 1080x1920.
+  One node, no distortion, no letterboxing.
+
+`scripts/validate-workflows.py` now warns when a workflow exceeds the native canvas.
+
+### 768x1344 does not fit on a small-RAM 5090 host with the unpruned checkpoint
+
+The first attempt at 768x1344 / 124 frames OOMed after 292 s:
+
+```
+INFO: high memory utilization - 46.4GiB / 55.88GiB (83 %)
+INFO: high memory utilization - 52.44GiB / 55.88GiB (93 %)
+WARN: very high memory utilization: 53.67GiB / 55.88GiB (96 %)
+WARN: container is unhealthy: triggered memory limits (OOM)
+```
+
+Three things this cost, all avoidable:
+
+1. **A second `SaveVideo` was the wrong idea.** It was added to emit the native 768x1344
+   master alongside the 1080p deliverable, but it pins the decoded batch (1.54 GB) alive
+   next to the upscaled one (3.10 GB) and runs a second encode — on the job already closest
+   to the ceiling. Do not add output branches to a memory-bound graph.
+2. **One OOM poisons the whole queue.** Jobs B and C, submitted in the same batch, failed
+   in 2.7 s and 0.5 s with `ComfyUI server (127.0.0.1:8188) not reachable`. Batching
+   variants for warmth control only works if the first one survives.
+3. **The dead worker crash-loops and keeps billing.** It emitted `container is unhealthy`
+   every few seconds for ~3.5 minutes. Only `workersMax: 0` reaps it — and a job submitted
+   into that window fails instantly against the restarting container. Watch the system log
+   after any failure, and scale to zero before resubmitting.
+
+### The upscale must happen off the GPU
+
+Removing the in-graph `ImageScale` is what made 1080p work. Measured peaks on the
+55.88 GiB tier, 768x1344 / 124 frames, pruned checkpoint:
+
+| Graph | Sampling | Peak | Result |
+|---|---|---|---|
+| + `ImageScale` to 1080x1920 | 48.18 GiB (86%) | 52.71 GiB, +3.09 GB pending | **OOM** |
+| native only | 48.40 GiB (86%) | **52.94 GiB (94%)** | **completed, 461.6 s** |
+
+The failing graph sampled at 52.71 GiB and then had to allocate `ImageScale`'s
+124x1080x1920x3x4 = 3.09 GB on top — 55.8 GiB against a 55.88 GiB limit. That is the
+OOM, to within rounding.
+
+**Lanczos is deterministic resampling.** It runs no model and uses nothing a 5090
+provides, so paying GPU rates *and* the tightest resource in the system to do it was
+simply the wrong place to put the work. `scripts/upscale-to-1080.sh` does it locally
+with ffmpeg for free, and upscaling before h264 rather than after avoids a second
+compression generation.
+
+Note the native graph still peaks at **94%**. 768x1344 at 124 frames sits at the edge of
+this RAM tier with no in-graph post-processing at all.
+
+### Direct 1080p generation does not run
+
+The control: 1088x1920 (2.09 MP), 124 frames, same seed, prompt and conditioning image,
+no in-graph upscale.
+
+```
+51.61 GiB (92 %)   <- sampling, 3.2 GiB above the native run
+53.03 GiB (94 %)   <- VAE decode
+triggered memory limits (OOM)
+```
+
+It burned **754.7 s of GPU time and produced nothing**. So the answer to "generate 1080p
+directly or upscale a 768p render" is not merely that direct is worse — on this tier it is
+not runnable, and it fails *after* paying for the full sampling pass.
+
+### Lanczos vs Real-ESRGAN at 1080x1920
+
+Both from the same native master, both exactly 1080x1920, so directly comparable:
+
+| Upscaler | Sharpness | Shimmer | Motion | Mbps | Cost |
+|---|---|---|---|---|---|
+| Lanczos (ffmpeg) | 366.5 | 0.1554 | 3.85 | 22.43 | free, ~2 s |
+| **Real-ESRGAN x2 -> INTER_AREA** | 355.1 | **0.1117** | 3.55 | 23.25 | free, ~4 min on an RTX 3060 |
+
+**ESRGAN wins, but not for the expected reason.** It is fractionally *less* sharp, not
+more — at a 1.43x upscale there is little for it to invent. What it does is cut shimmer
+by 28%, because upscaling 2x and then reducing with `INTER_AREA` supersamples away the
+grain that H3 puts in flat areas. Side by side at 2x zoom the wall behind the subjects is
+visibly cleaner while eyelashes and petals stay equally crisp.
+
+An in-graph `ImageUpscaleWithModel` was never viable regardless: at 2x it needs
+124x1536x2688x3x4 = 6.1 GB for the output batch, on a tier that OOMs at 4.6 GB of image
+tensors. `RealESRGAN_x2plus.pth` is on the volume (67,061,725 bytes) but unused; the work
+happens in `scripts/upscale-esrgan.py`, which reimplements RRDBNet against plain torch so
+no basicsr/spandrel dependency is needed.
+
+### The 1080x1920 vertical recipe
+
+1. Generate `workflows/minimax_h3_i2v_vertical_768x1344_api.json` — 768x1344, 124 frames,
+   pruned FL2VA, EasyCache. **461.6 s, $0.203.**
+2. `python scripts/upscale-esrgan.py <native>.mp4 <out>.mp4 --model RealESRGAN_x2plus.pth`
+   — free, local.
+
+Conditioning images must be pre-fitted to 768x1344 with `scripts/prep-first-frame.py`;
+`first_frame` stretches rather than fits. Note a 9:16 crop of a landscape source keeps only
+31% of its width.
+
+| Route | GPU time | Cost | Output |
+|---|---|---|---|
+| **Native 768x1344 + local upscale** | 461.6 s | **$0.203** | 1080x1920, clean |
+| Direct 1088x1920 | 754.7 s | $0.332 | **nothing — OOM** |
+
 ### Worker RAM varies by host, not by GPU tier
 
 The same RTX 5090 type in the same datacenter reported **55.88 GiB** on one host and
