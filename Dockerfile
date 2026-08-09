@@ -50,3 +50,42 @@ RUN sed -i \
 # Sanity-check the patched file still parses.
 RUN python -c "import ast,sys; ast.parse(open('/handler.py').read())" \
     && echo "handler.py patched and parses"
+
+# ---------------------------------------------------------------------------
+# COLD-START PROBE (0.3.0) — bake the two VAEs, 5.41 GiB.
+#
+# The point is measurement, not the saving itself. A cold start is ~43 s of image
+# load plus ~250 s staging weights off the network volume. Whether baking the full
+# 30.69 GiB shared stack (text encoder + VAEs) is worth it turns on a number that
+# has never been measured: does cached image load time scale with image size?
+#
+#   22.7 GiB image -> "Loaded image" in 41-44 s (three observations, 2026-08-09)
+#
+# If 28.1 GiB still loads in ~43 s, image load is mostly fixed cost and baking the
+# rest is a clear win. If it rises to ~53 s, extraction is linear at ~530 MB/s and
+# baking roughly breaks even — the bytes saved off the volume (264 MB/s) are paid
+# back on any host that has to pull the image from GHCR (~69 MB/s).
+#
+# These copies win over the ones on the volume: extra_model_paths.yaml adds its
+# paths with is_default=false, which APPENDS to the search list, and
+# folder_paths.get_full_path() returns the first match — so /comfyui/models/vae is
+# consulted before /runpod-volume/models/vae.
+RUN python <<'PY'
+import os, urllib.request
+
+BASE = "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main/vae"
+# Exact sizes from the HF API. A truncated download otherwise surfaces as a
+# baffling safetensors parse error on a live worker; fail the build instead.
+WANT = {
+    "minimax_h3_video_vae_fp16.safetensors": 5207808496,
+    "minimax_h3_audio_vae_fp32.safetensors": 605254808,
+}
+os.makedirs("/comfyui/models/vae", exist_ok=True)
+for name, size in WANT.items():
+    dest = f"/comfyui/models/vae/{name}"
+    urllib.request.urlretrieve(f"{BASE}/{name}", dest)
+    got = os.path.getsize(dest)
+    if got != size:
+        raise SystemExit(f"FATAL {name}: got {got} bytes, want {size}")
+    print(f"OK {name} {got}")
+PY
