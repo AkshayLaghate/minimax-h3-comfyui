@@ -55,7 +55,6 @@ NATIVE_MAX_PIXELS = 768 * 1344
 # naming anything else shows up as an empty loader dropdown on the worker.
 ON_VOLUME = {
     "minimax_h3_fl2va_int8_convrot.safetensors",
-    "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
     "minimax_h3_ref2va_pruned_int8_convrot.safetensors",
     "qwen3vl_32b_minimax_h3_int8_convrot.safetensors",
     "minimax_h3_video_vae_fp16.safetensors",
@@ -64,6 +63,16 @@ ON_VOLUME = {
     # NOTE: the Turbo LoRA was on the deleted CA-MTL-3 volume and is NOT on the
     # EU-RO-1 volume. It was rejected for noise, so it is not re-downloaded;
     # minimax_h3_i2v_portrait_turbo_api.json will fail until it is.
+    #
+    # Two files are DELIBERATELY absent from this set so the validator rejects any
+    # workflow that reaches for them again. Both were measured and rejected:
+    #
+    #   minimax_h3_fl2va_pruned_int8_convrot.safetensors
+    #       +66% Laplacian energy and +41% bitrate from an identical seed - noise,
+    #       not detail. Deleted from the volume 2026-08-09.
+    #   qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors
+    #       Still ON the volume, but OOMs at 640x1120 where INT8 completes: it
+    #       loads lighter (42.85 vs ~48 GiB) and then peaks higher (55.39 GiB).
 }
 
 # Ref2VA's reference inputs are Autogrow TemplatePrefix. Two things bite here:
