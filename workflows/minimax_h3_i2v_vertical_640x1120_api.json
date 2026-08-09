@@ -29,7 +29,7 @@
   "15": {
     "class_type": "LoadImage",
     "inputs": {
-      "image": "first_frame_768x1344.png"
+      "image": "first_frame_640x1120.png"
     }
   },
   "5": {
@@ -44,8 +44,8 @@
         0
       ],
       "prompt": "Warm domestic scene during a Ganesh festival. The baby boy laughs and gently offers the pink lotus forward; the little elephant-headed figure sways slightly and its ears flick. Oil lamp flames flicker, marigold petals stir faintly. Gentle handheld camera, very slight push-in, no cuts.\n\nAudio: soft temple bells, a distant tabla and harmonium melody, a child's delighted giggle around the middle, quiet room ambience throughout.",
-      "width": 768,
-      "height": 1344,
+      "width": 640,
+      "height": 1120,
       "length": 124,
       "first_frame": [
         "15",
@@ -176,7 +176,7 @@
         "13",
         0
       ],
-      "filename_prefix": "video/MiniMax_H3_v768x1344",
+      "filename_prefix": "video/MiniMax_H3_v640x1120",
       "format": "auto",
       "codec": "auto"
     }

@@ -407,6 +407,9 @@ compression generation.
 Note the native graph still peaks at **94%**. 768x1344 at 124 frames sits at the edge of
 this RAM tier with no in-graph post-processing at all.
 
+(Those runs used the pruned checkpoint, whose output was afterwards rejected on quality —
+see below. The memory conclusion stands: it is about tensor allocation, not weights.)
+
 ### Direct 1080p generation does not run
 
 The control: 1088x1920 (2.09 MP), 124 frames, same seed, prompt and conditioning image,
@@ -443,20 +446,88 @@ tensors. `RealESRGAN_x2plus.pth` is on the volume (67,061,725 bytes) but unused;
 happens in `scripts/upscale-esrgan.py`, which reimplements RRDBNet against plain torch so
 no basicsr/spandrel dependency is needed.
 
+### Pruned FL2VA is NOT interchangeable with the full checkpoint
+
+The pruned Ref2VA is documented above as visually indistinguishable. **That does not
+generalise to FL2VA**, and assuming it did cost a round of bad output. Single-variable
+A/B — same seed, prompt, conditioning image, canvas (768x1024), steps and EasyCache
+settings, only `unet_name` changed:
+
+| Checkpoint | Mbps | Sharpness | Shimmer | ref_delta |
+|---|---|---|---|---|
+| `fl2va_int8_convrot` | 3.50 | 488.5 | 0.118 | 9.16 |
+| `fl2va_pruned_int8_convrot` | 4.93 (+41%) | 812.1 (+66%) | 0.1428 (+21%) | 14.18 (+55%) |
+
+From an identical seed, +66% Laplacian energy is not detail — it is noise. Zoomed on the
+crown, the full checkpoint resolves coherent gold filigree with smooth gradients; the
+pruned one breaks it into scratchy over-etched scribble with purple fringing on the gems
+and colour noise along every edge (Laplacian variance on that crop: 1284 vs 2240). The
++55% `ref_delta` says it also honours the conditioning image less faithfully.
+
+**Rising sharpness alongside rising bitrate is the noise signature**, the same one that
+rejected the Turbo LoRA. Treat any change that increases both as suspect until a
+single-variable A/B says otherwise.
+
+The pruned checkpoint was adopted to fix an OOM — and it was not even the fix; removing
+the in-graph `ImageScale` was. It remains on the volume (20,970,379,616 bytes) but no
+workflow references it, and it should not be used for I2V.
+
+### Canvas is bounded by host RAM once the full checkpoint is required
+
+**Do not size a canvas from the `high memory utilization` lines.** They are sampled every
+30 s, so they miss peaks between samples. The "44.39 GiB (79%)" recorded above for
+768x1024 was one sample and was never the true peak — sizing 704x1216 from it predicted
+84% and the run OOMed at 98%. Measured peaks are much closer together than that figure
+suggests:
+
+| Run | Peak | Result |
+|---|---|---|
+| pruned @ 768x1024 | 54.38 GiB (97%) | survived |
+| unpruned @ 704x1216, **cold worker** | 54.85 GiB (98%) | **OOM** |
+
+Half a gibibyte separates success from failure. Every run on this tier grazes the ceiling
+and which side it lands on is partly luck.
+
+| Canvas | MP | vs 768x1024 | Upscale to 1080x1920 | Status |
+|---|---|---|---|---|
+| **640x1120** | **0.717** | **0.91x** | **1.71x** | **works — production default** |
+| 768x1024 | 0.786 | 1.00x | 1.88x | works (3:4; a 9:16 crop loses 25% of width) |
+| 704x1216 | 0.856 | 1.09x | 1.58x | **OOM** |
+| 768x1344 | 1.032 | 1.31x | 1.43x | OOM |
+
+**With the full checkpoint the 55.88 GiB tier cannot exceed ~768x1024**, so 640x1120 is
+the vertical default: below the proven pixel count, already near 9:16 so the crop is
+minimal, and on weights that resolve detail properly.
+
+Reaching the full 768x1344 native canvas needs host RAM, not a canvas tweak. The untested
+lever is the text encoder: `qwen3vl_32b_minimax_h3_nvfp4_awq` is 14.61 GiB against the
+INT8 build's 25.28 GiB, freeing ~10.7 GiB — far more than any canvas change — and NVFP4
+has native tensor-core support on the 5090's sm_120. Quantising the *text encoder* affects
+prompt understanding rather than pixel rendering, so it is much less likely to reproduce
+the pruned-checkpoint speckle.
+
+### Changing checkpoint needs a cold worker
+
+A job that asks for a different `unet_name` than the worker last loaded OOMs during model
+load (~100 s in, well before sampling). A restarted container still showed **44.42 GiB
+(79%) before loading a single weight** — safetensors read off the network volume land in
+page cache, which counts against the container's cgroup limit. Scale the endpoint to
+`workersMax: 0`, confirm zero workers, then resubmit.
+
 ### The 1080x1920 vertical recipe
 
-1. Generate `workflows/minimax_h3_i2v_vertical_768x1344_api.json` — 768x1344, 124 frames,
-   pruned FL2VA, EasyCache. **461.6 s, $0.203.**
+1. Generate `workflows/minimax_h3_i2v_vertical_640x1120_api.json` — 640x1120, 124 frames,
+   **full** `fl2va_int8_convrot`, EasyCache. Measured: **407.8 s, $0.180.**
 2. `python scripts/upscale-esrgan.py <native>.mp4 <out>.mp4 --model RealESRGAN_x2plus.pth`
-   — free, local.
+   — free, local, ~4 min on an RTX 3060.
 
-Conditioning images must be pre-fitted to 768x1344 with `scripts/prep-first-frame.py`;
-`first_frame` stretches rather than fits. Note a 9:16 crop of a landscape source keeps only
-31% of its width.
+Conditioning images must be pre-fitted to the exact canvas with
+`scripts/prep-first-frame.py`; `first_frame` stretches rather than fits. Note a 9:16 crop
+of a landscape source keeps only ~31% of its width.
 
 | Route | GPU time | Cost | Output |
 |---|---|---|---|
-| **Native 768x1344 + local upscale** | 461.6 s | **$0.203** | 1080x1920, clean |
+| **Native + local upscale** | ~460 s | **~$0.20** | 1080x1920, clean |
 | Direct 1088x1920 | 754.7 s | $0.332 | **nothing — OOM** |
 
 ### Worker RAM varies by host, not by GPU tier
