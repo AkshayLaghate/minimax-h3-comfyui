@@ -22,6 +22,7 @@
 param(
     [Parameter(Mandatory = $true)][string]$Workflow,
     [string]$Image,
+    [string[]]$Files,
     [string]$EndpointId = 't9u2wy8o9ucnpz',
     [string]$ApiKey = $env:RUNPOD_API_KEY
 )
@@ -33,12 +34,20 @@ if (-not (Test-Path $Workflow)) { throw "Workflow not found: $Workflow" }
 $wf = Get-Content $Workflow -Raw | ConvertFrom-Json
 $input_ = @{ workflow = $wf }
 
-if ($Image) {
-    if (-not (Test-Path $Image)) { throw "Image not found: $Image" }
-    $bytes = [IO.File]::ReadAllBytes((Resolve-Path $Image))
-    $input_.images = @(@{
-        name  = (Split-Path $Image -Leaf)
-        image = [Convert]::ToBase64String($bytes)
+# worker-comfyui's `images` list just base64-decodes each entry into ComfyUI's input
+# directory under the given name — it does not check the payload is an image. That is
+# how Ref2VA's reference .mp3 gets to the worker for LoadAudio.
+$all = @()
+if ($Image) { $all += $Image }
+if ($Files) { $all += $Files }
+
+if ($all.Count) {
+    $input_.images = @(foreach ($f in $all) {
+        if (-not (Test-Path $f)) { throw "File not found: $f" }
+        @{
+            name  = (Split-Path $f -Leaf)
+            image = [Convert]::ToBase64String([IO.File]::ReadAllBytes((Resolve-Path $f)))
+        }
     })
 }
 

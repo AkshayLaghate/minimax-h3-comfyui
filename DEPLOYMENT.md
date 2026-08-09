@@ -530,6 +530,40 @@ of a landscape source keeps only ~31% of its width.
 | **Native + local upscale** | ~460 s | **~$0.20** | 1080x1920, clean |
 | Direct 1088x1920 | 754.7 s | $0.332 | **nothing — OOM** |
 
+### 10 s Ref2VA fits where 10 s I2V would not
+
+Ref2VA loads the **pruned** Ref2VA checkpoint (19.53 GiB) rather than the full FL2VA
+(31.70 GiB), so its weight set is 50.22 GiB against I2V's 62.39 GiB. That 12.17 GiB is
+exactly the headroom a long clip needs, and it is why memory projections calibrated on
+I2V are far too pessimistic for Ref2VA.
+
+Measured: **640x1120, 243 frames (10.125 s), 595.0 s** on the 55.88 GiB tier. The same
+frame count on I2V weights would not fit.
+
+243 is on the 17k+5 grid and lands at 10.125 s, which matches a 10.083 s reference audio
+almost exactly — worth choosing the frame count from the audio length rather than rounding
+to whole seconds.
+
+Reference assets travel in the same `input.images` list as conditioning images:
+worker-comfyui base64-decodes each entry into ComfyUI's input directory under the given
+name without checking it is an image, so an `.mp3` reaches `LoadAudio` the same way.
+`scripts/submit-job.ps1 -Files` takes several.
+
+Note `ref_image_size: "match"` resizes reference images to the generation canvas, so a
+landscape reference on a vertical canvas gets squashed — pre-fit references with
+`scripts/prep-first-frame.py` exactly as for `first_frame`.
+
+### `drift` cannot tell camera motion from scene wandering
+
+The 10 s Ref2VA scored `drift` 51.52, against 52.02 for the 362-frame clip that was
+rejected for wandering — but it is fine. A filmstrip at 0 / 2.5 / 5 / 7.5 / 10 s shows
+characters, costumes, colours and room all consistent; what the metric measured was the
+slow push-in the prompt asked for.
+
+`drift` is mean |frame[i] - frame[0]|, so any sustained camera move inflates it. Use it to
+*flag* clips for inspection, never to condemn them. The 362-frame failure was confirmed by
+looking — the room had restyled and the costumes had changed — not by the number alone.
+
 ### Worker RAM varies by host, not by GPU tier
 
 The same RTX 5090 type in the same datacenter reported **55.88 GiB** on one host and
