@@ -33,11 +33,18 @@ Verified byte-exact against the Hugging Face API after download:
 models/diffusion_models/minimax_h3_fl2va_int8_convrot.safetensors    34038892334
 models/diffusion_models/minimax_h3_ref2va_pruned_int8_convrot.safetensors 20970379616
 models/text_encoders/qwen3vl_32b_minimax_h3_int8_convrot.safetensors 27141342152
+models/text_encoders/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors    15687142551
 models/vae/minimax_h3_video_vae_fp16.safetensors                      5207808496
 models/vae/minimax_h3_audio_vae_fp32.safetensors                       605254808
+models/upscale_models/RealESRGAN_x2plus.pth                             67061725
 ```
 
-~82 GiB of 120 GB. Mounts at `/runpod-volume` on a serverless worker.
+~96.6 GiB of 120 GB. Mounts at `/runpod-volume` on a serverless worker.
+
+Two of these are dead weight and can be deleted to reclaim ~15.7 GiB if space is ever
+needed: the **NVFP4 encoder** (rejected, see below) and **RealESRGAN** (upscaling moved off
+the worker entirely). `minimax_h3_fl2va_pruned_int8_convrot.safetensors` was deleted on
+2026-08-09 after it was measured to degrade output.
 
 ## Historical: pods did not work in CA-MTL-3 with the old volume
 
@@ -563,6 +570,59 @@ third off. Grouping is automatic, keyed on each workflow's `UNETLoader.unet_name
 
 Measured 2026-08-09: 5085.3 s billed at $1.585/hr = $2.2393, against ~2328 s of successful
 generation. The gap is staging, cold starts, failed runs and idle time.
+
+### Baking weights into the image does not pay — the arithmetic
+
+Measured transfer rates, 2026-08-09:
+
+| Path | Rate |
+|---|---|
+| Image extract from host cache (22.7 GiB in 41-44 s) | ~530 MB/s |
+| Weight staging from network volume | ~264 MB/s |
+| Image **pull from GHCR**, uncached host (22.7 GiB in 336 s) | ~69 MB/s |
+
+Baking moves bytes from the 264 MB/s path to the 530 MB/s path, so moving 20 GiB saves
+~38 s. But on a host that has not cached the image those bytes cost ~300 s extra to pull,
+and we landed on an uncached host once in ~8 worker starts:
+
+```
+0.88 x (-38 s) + 0.12 x (+300 s) ~= +2.6 s     # net neutral, possibly negative
+```
+
+It is also unbuildable here. GitHub Actions reclaims ~46 GB and the current 22.7 GiB image
+already needs most of it; local drives have 21/37/40 GB free; RunPod's own builder caps at
+80 GB with a 30-minute `docker build` limit and its docs explicitly say to pre-build
+weight-heavy images elsewhere.
+
+**Batching is the lever instead** — one warm worker per batch pays staging once. That is
+what `scripts/pipeline.py` does.
+
+### NVFP4 text encoder: rejected, it OOMs where INT8 succeeds
+
+`qwen3vl_32b_minimax_h3_nvfp4_awq` is 14.61 GiB against INT8's 25.28 GiB, so it looked like
+a free 10.67 GiB of host RAM — enough to reach the 768x1344 native canvas. ComfyUI supports
+it (`quant_format == "nvfp4"`) and `supports_nvfp4_compute` needs compute capability >= 10,
+which the RTX 5090's 12.0 clears.
+
+It does not work. Single-variable A/B at 640x1120, seed 7, only `clip_name` changed:
+
+```
+14:20:47  42.85 GiB (76 %)   <- loading: LOWER than INT8's ~48 GiB, as expected
+14:21:47  52.51 GiB (93 %)   <- sampling: HIGHER than INT8, which completes this config
+14:23:47  55.39 GiB (99 %)
+          triggered memory limits (OOM)
+```
+
+**It saves at load and costs more at compute**, ending in an OOM on the exact configuration
+INT8 runs successfully in 407.8 s. The mechanism was not captured — the worker was reaped
+to stop the crash-loop billing before its container log was read, which was the wrong order.
+A dequantisation fallback would explain it but is unverified.
+
+INT8 stays. The NVFP4 file remains on the volume unused; no workflow references it.
+
+Incidental: staging (container start -> first memory line) was 180 s with the smaller
+encoder against 192-247 s with INT8. Directionally consistent with byte-bound staging but
+inside the existing noise band, so it does not rescue the baking case either.
 
 ### Two things the pipeline does that are easy to forget
 
