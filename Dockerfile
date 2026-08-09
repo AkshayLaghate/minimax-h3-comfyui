@@ -52,40 +52,45 @@ RUN python -c "import ast,sys; ast.parse(open('/handler.py').read())" \
     && echo "handler.py patched and parses"
 
 # ---------------------------------------------------------------------------
-# COLD-START PROBE (0.3.0) — bake the two VAEs, 5.41 GiB.
+# COLD-START PROBE — RAN AS 0.3.0, DISABLED. Baking weights does not pay.
 #
-# The point is measurement, not the saving itself. A cold start is ~43 s of image
-# load plus ~250 s staging weights off the network volume. Whether baking the full
-# 30.69 GiB shared stack (text encoder + VAEs) is worth it turns on a number that
-# has never been measured: does cached image load time scale with image size?
+# This stage baked the two VAEs (+5.41 GiB, 22.7 -> 28.1 GiB) to measure how cached
+# image load scales with image size. Measured 2026-08-09:
 #
-#   22.7 GiB image -> "Loaded image" in 41-44 s (three observations, 2026-08-09)
+#   22.7 GiB -> 41-44 s   (three observations)
+#   28.1 GiB -> 64 s
 #
-# If 28.1 GiB still loads in ~43 s, image load is mostly fixed cost and baking the
-# rest is a clear win. If it rises to ~53 s, extraction is linear at ~530 MB/s and
-# baking roughly breaks even — the bytes saved off the volume (264 MB/s) are paid
-# back on any host that has to pull the image from GHCR (~69 MB/s).
+#   marginal rate for the added bytes : 276 MB/s
+#   network volume staging rate       : 264 MB/s     <-- the same
 #
-# These copies win over the ones on the volume: extra_model_paths.yaml adds its
-# paths with is_default=false, which APPENDS to the search list, and
-# folder_paths.get_full_path() returns the first match — so /comfyui/models/vae is
-# consulted before /runpod-volume/models/vae.
-RUN python <<'PY'
-import os, urllib.request
-
-BASE = "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main/vae"
-# Exact sizes from the HF API. A truncated download otherwise surfaces as a
-# baffling safetensors parse error on a live worker; fail the build instead.
-WANT = {
-    "minimax_h3_video_vae_fp16.safetensors": 5207808496,
-    "minimax_h3_audio_vae_fp32.safetensors": 605254808,
-}
-os.makedirs("/comfyui/models/vae", exist_ok=True)
-for name, size in WANT.items():
-    dest = f"/comfyui/models/vae/{name}"
-    urllib.request.urlretrieve(f"{BASE}/{name}", dest)
-    got = os.path.getsize(dest)
-    if got != size:
-        raise SystemExit(f"FATAL {name}: got {got} bytes, want {size}")
-    print(f"OK {name} {got}")
-PY
+# Moving 5.41 GiB from the volume into the image turned a 22.0 s volume read into a
+# 21.0 s image load: a 1 second saving. There is no faster path to move bytes onto,
+# so baking buys nothing while still costing ~84 s per 5.41 GiB on any host that has
+# to pull the image from GHCR (~69 MB/s). Scaled to the full 30.69 GiB shared stack:
+# +5.5 s saved against a +478 s penalty.
+#
+# (The prior estimate of ~38 s saved per 20 GiB compared the image's AVERAGE rate,
+# 567 MB/s, which amortises fixed setup across the whole image. The marginal rate is
+# what baking actually buys.)
+#
+# Kept, disabled, so the measurement can be repeated if RunPod's storage changes.
+# Note when re-enabling: these copies do take precedence over the volume's, because
+# extra_model_paths.yaml adds paths with is_default=false (which APPENDS) and
+# folder_paths.get_full_path() returns the first match.
+#
+# RUN python <<'PY'
+# import os, urllib.request
+# BASE = "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main/vae"
+# WANT = {
+#     "minimax_h3_video_vae_fp16.safetensors": 5207808496,
+#     "minimax_h3_audio_vae_fp32.safetensors": 605254808,
+# }
+# os.makedirs("/comfyui/models/vae", exist_ok=True)
+# for name, size in WANT.items():
+#     dest = f"/comfyui/models/vae/{name}"
+#     urllib.request.urlretrieve(f"{BASE}/{name}", dest)
+#     got = os.path.getsize(dest)
+#     if got != size:
+#         raise SystemExit(f"FATAL {name}: got {got} bytes, want {size}")
+#     print(f"OK {name} {got}")
+# PY

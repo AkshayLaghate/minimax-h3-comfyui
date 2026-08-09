@@ -571,28 +571,47 @@ third off. Grouping is automatic, keyed on each workflow's `UNETLoader.unet_name
 Measured 2026-08-09: 5085.3 s billed at $1.585/hr = $2.2393, against ~2328 s of successful
 generation. The gap is staging, cold starts, failed runs and idle time.
 
-### Baking weights into the image does not pay — the arithmetic
+### Baking weights into the image does not pay — measured, not modelled
 
-Measured transfer rates, 2026-08-09:
+Image tag `0.3.0` baked the two VAEs (+5.41 GiB, 22.7 -> 28.1 GiB) purely to measure how
+cached image load scales with size. Result:
 
-| Path | Rate |
+```
+22.7 GiB  ->  41-44 s   (three observations)
+28.1 GiB  ->  64 s      (15:32:01 "loading container image from cache"
+                         -> 15:33:05 "Loaded image")
+```
+
+| Rate | MB/s |
 |---|---|
-| Image extract from host cache (22.7 GiB in 41-44 s) | ~530 MB/s |
-| Weight staging from network volume | ~264 MB/s |
-| Image **pull from GHCR**, uncached host (22.7 GiB in 336 s) | ~69 MB/s |
+| Image load, **average** over 22.7 GiB | 567 |
+| Image load, **marginal** for the 5.41 GiB added | **276** |
+| Weight staging from the network volume | **264** |
+| Image pull from GHCR, uncached host | ~69 |
 
-Baking moves bytes from the 264 MB/s path to the 530 MB/s path, so moving 20 GiB saves
-~38 s. But on a host that has not cached the image those bytes cost ~300 s extra to pull,
-and we landed on an uncached host once in ~8 worker starts:
+**The marginal rate and the volume rate are the same.** Baking 5.41 GiB moved it from a
+22.0 s volume read to a 21.0 s image load — a **1 second** saving. Extrapolated:
 
-```
-0.88 x (-38 s) + 0.12 x (+300 s) ~= +2.6 s     # net neutral, possibly negative
-```
+| Baked | Saving | Penalty on an uncached host |
+|---|---|---|
+| 5.41 GiB (VAEs) | +1.0 s | +84 s |
+| 20.02 GiB (encoder + VAEs) | +3.6 s | +312 s |
+| 30.69 GiB (full shared stack) | +5.5 s | +478 s |
 
-It is also unbuildable here. GitHub Actions reclaims ~46 GB and the current 22.7 GiB image
-already needs most of it; local drives have 21/37/40 GB free; RunPod's own builder caps at
-80 GB with a 30-minute `docker build` limit and its docs explicitly say to pre-build
-weight-heavy images elsewhere.
+So baking is not "roughly break-even" — it is a straight loss. **The earlier estimate that
+it saved ~38 s per 20 GiB was wrong**: it compared the image's *average* rate (567 MB/s,
+which amortises fixed setup across the whole image) against the volume rate, when what
+matters is the *marginal* rate of adding bytes. Load also scaled slightly **worse** than
+linearly — 64 s observed against 53.2 s predicted.
+
+Reverted to `0.2.0`. The probe Dockerfile stage is retained, commented out, so the
+measurement can be repeated if RunPod's storage characteristics change.
+
+Buildability was never the real obstacle, and two claims made earlier were wrong: RunPod
+Pods **can** build images (official Bazel tutorial; `dockerd` runs when the Pod is
+privileged), and GitHub Actions can reach **60+ GB** with `easimon/maximize-build-space`
+rather than the ~46 GB the hand-rolled cleanup manages. A 53 GiB image was buildable all
+along — it simply would not have helped.
 
 **Batching is the lever instead** — one warm worker per batch pays staging once. That is
 what `scripts/pipeline.py` does.
