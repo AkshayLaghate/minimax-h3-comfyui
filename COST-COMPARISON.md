@@ -1,143 +1,167 @@
-# MiniMax H3: kie.ai vs self-hosted on RunPod
+# MiniMax H3: kie.ai vs WaveSpeed vs self-hosted on RunPod
 
-Compiled 2026-08-10. Our figures are measured from this deployment, not modelled;
-kie.ai's are their published prices as of today.
+Compiled 2026-08-10. Our figures are measured from this deployment; provider figures are
+their published prices read from the live pages today.
 
 ## Verdict
 
-**Below ~27 clips a month, kie.ai is cheaper. Above it, we are — and the gap widens
-fast with clip length.** At 100 clips/month we cost $0.35 against their $0.58.
+**No single winner — it splits by mode, resolution and volume.**
 
-But cost is not the whole decision: **kie.ai can produce true 2K, which our weights
-cannot do at all.** The open FL2VA checkpoint is 768p-class; MiniMax's 2K path is
-`H3-Regenerate-2K`, an upscaling module they did not open-source. Our 1080×1920 is a
-640×1120 render upscaled locally with Real-ESRGAN — competent, but not the same thing.
+| Need | Cheapest | Why |
+|---|---|---|
+| 480p, any volume | **WaveSpeed 480p** ($0.04/s) | $0.20 for 5 s — below our marginal cost. Self-hosting never wins here. |
+| 768p I2V, under ~36 clips/mo | **WaveSpeed 768p** ($0.10/s) | 11% under kie.ai |
+| **Ref2VA** | **kie.ai** ($0.1125/s) | Reference audio is free; WaveSpeed charges $0.125/s **plus** $0.02/audio and $0.02/image |
+| 2K | **WaveSpeed 2K** ($0.14/s) | 23% under kie.ai's $0.1825/s. Neither is reproducible here at any price. |
+| 768p at volume, or long clips | **self-host** | Our per-second cost falls with length; theirs never does |
 
-## kie.ai published pricing
+## Provider pricing
 
-Billing is `Unit Price × (generated duration + input video duration) + extra images`.
-Input **audio is free**; the first **5 input images are free**, then $0.055 each.
-1 credit = $0.005 (22.5 credits = $0.1125). No bulk credit tiers are published.
+### kie.ai
 
-| Tier | Credits/s | USD/s | Their quoted Official/Fal price | Discount |
+1 credit = **$0.005** exactly — verified across 11 rows and 4 model families
+(`USD ÷ credits = 0.0050` every time; Qwen image at 12 credits = $0.06 confirms it).
+Billing is `Unit Price × (generated + input video duration) + extra images`.
+**Input audio free; first 5 images free**, then $0.055 each.
+
+| Tier | Credits/s | USD/s | Their quoted Fal price | Discount |
 |---|---|---|---|---|
-| 768p — text/image/reference/video-to-video | 22.5 | **$0.1125** | $0.18 | −37.5% |
-| 2K — text/image/reference/video-to-video | 36.5 | **$0.1825** | $0.26 | −29.8% |
+| 768p — T2V / I2V / Ref2VA / V2V | 22.5 | **$0.1125** | $0.18 | −37.5% |
+| 2K — same four modes | 36.5 | **$0.1825** | $0.26 | −29.8% |
 
-Notably the price is flat across T2V / I2V / Ref2VA — reference conditioning is not
-surcharged, and neither is our most-used mode.
+Flat across modes — reference conditioning is not surcharged.
+
+### WaveSpeed
+
+Splits exactly along the line our own research found: `wavespeed-ai/minimax-h3/*` are
+labelled **"Open Weights"** and cap at 768p — the same checkpoint we run — while
+`minimax/h3/*` is the official API passthrough that reaches 2K.
+
+| Endpoint | 480p | 768p | 2K |
+|---|---|---|---|
+| `wavespeed-ai/…/image-to-video` (open weights) | **$0.04/s** | **$0.10/s** | — |
+| `wavespeed-ai/…/reference-to-video` (open weights) | **$0.05/s** | **$0.125/s** | — |
+| `minimax/h3/image-to-video` (official) | — | $0.10/s | **$0.14/s** |
+
+Ref2VA extras: **$0.02 per reference image, $0.02 per reference audio**, reference video
+billed at the output rate.
+
+Verified by internal consistency on the live pages: `$0.10 × 5 = $0.50`, `× 10 = $1.00`,
+`× 15 = $1.50`; `$0.14 × 15 = $2.10`. All as printed.
 
 ## Our measured cost
 
-RTX 5090 serverless at **$1.585/hr** (from `/v1/billing/endpoints`, not the pod rate).
+RTX 5090 serverless at **$1.585/hr** (from billing records, not the $0.69/hr pod rate —
+serverless bills 2.30×). Figures below are execution time × **1.241**, the observed ratio
+of billed to executed seconds on 2026-08-09 (image load, container start, 60 s idle,
+crash-loop billing after failures).
 
-- **floor** = GPU execution time only — what a perfectly batched warm worker costs.
-- **realistic** = floor × 1.241, the observed ratio of billed time (5085.3 s) to summed
-  execution time (4098.1 s) on 2026-08-09. The gap is image load, container start, the
-  60 s idle timeout and crash-loop billing after failures.
-
-| Run (measured) | Video | GPU s | Floor | Realistic | $/video-second |
-|---|---|---|---|---|---|
-| I2V 640×1120, best | 5.17 s | 408 | $0.1795 | $0.2228 | $0.0431 |
-| I2V 640×1120, worst | 5.17 s | 489 | $0.2152 | $0.2670 | $0.0517 |
-| I2V 768×1024 baseline | 5.17 s | 411 | $0.1810 | $0.2246 | $0.0435 |
-| Ref2VA 640×1120 | 10.13 s | 595 | $0.2620 | $0.3251 | $0.0321 |
-| I2V stitched ×2 | 14.58 s | 770 | $0.3390 | $0.4207 | $0.0288 |
-
-Plus a standing **$8.40/month** for the 120 GB network volume, paid whether or not
-anything is generated.
-
-## Head to head, marginal cost only
-
-| Clip | Ours (realistic) | kie.ai 768p | kie.ai 2K | They cost |
+| Clip | Video | GPU s | Cost | $/video-second |
 |---|---|---|---|---|
-| 5.17 s I2V | $0.2670 | $0.5813 | $0.9430 | **2.2×** more |
-| 10.13 s Ref2VA | $0.3251 | $1.1391 | $1.8478 | **3.5×** more |
-| 14.58 s stitched | $0.4207 | $1.6406 | $2.6614 | **3.9×** more |
+| I2V 640×1120 | 5.17 s | 489 | **$0.267** | $0.0517 |
+| Ref2VA 640×1120 | 10.13 s | 595 | **$0.325** | $0.0321 |
+| I2V stitched ×2 | 14.58 s | 770 | **$0.421** | $0.0288 |
 
-## Why the multiple grows with length
+Plus **$8.40/month** for the 120 GB volume, paid whether or not anything is generated.
 
-The two cost structures have different shapes:
+Note our output is **640×1120** — a 640 px short edge, sitting *between* WaveSpeed's 480p
+and 768p tiers. We cannot reach 768p at 124 frames on the 55.88 GiB RAM tier with the full
+checkpoint, so the fair comparison is arguably nearer their 480p price than their 768p one.
 
-- **kie.ai is purely linear** — every second costs $0.1125, forever.
-- **Ours is fixed-cost dominated.** Roughly 250 s of every job stages 50–62 GiB of
-  weights off the network volume before sampling starts; only the remainder scales with
-  clip length. Our per-second cost therefore *falls* from $0.052 at 5 s to $0.029 at 15 s.
+## Head to head, I2V, marginal cost only
 
-So the longer the clip, the better we look. On short clips their linear pricing is
-competitive; on long ones it is not close.
+| Duration | Ours | WS 480p | WS 768p | kie 768p | WS 2K | kie 2K |
+|---|---|---|---|---|---|---|
+| 5 s | **$0.267** | $0.200 | $0.500 | $0.5625 | $0.700 | $0.9125 |
+| 10 s | **$0.325** | $0.400 | $1.000 | $1.1250 | $1.400 | $1.8250 |
+| 15 s | **$0.421** | $0.600 | $1.500 | $1.6875 | $2.100 | $2.7375 |
 
-The same logic is why `scripts/pipeline.py` batches: several clips on one warm worker pay
-that ~250 s once instead of once each, pushing our floor down further.
+Against the cheapest 768p provider (WaveSpeed): they cost **1.87× at 5 s, 3.08× at 10 s,
+3.57× at 15 s**.
 
-## Break-even on volume
+**WaveSpeed 480p at 5 s ($0.200) is cheaper than our marginal cost ($0.267)** — before the
+volume is even counted. At that resolution self-hosting cannot win.
 
-Marginal cost $0.2670/clip against their $0.5813, with $8.40/month of volume to absorb:
+## Ref2VA is the exception
 
-| Clips/month | Ours all-in | kie.ai | Cheaper |
-|---|---|---|---|
-| 5 | $1.9470 | $0.5813 | kie.ai |
-| 10 | $1.1070 | $0.5813 | kie.ai |
-| 25 | $0.6030 | $0.5813 | kie.ai |
-| **~27** | **$0.5813** | **$0.5813** | **break-even** |
-| 50 | $0.4350 | $0.5813 | ours |
-| 100 | $0.3510 | $0.5813 | ours |
-| 200 | $0.3090 | $0.5813 | ours |
+Our real job — 10 s, one reference image, one reference audio:
 
-Break-even falls if clips are longer: at 10 s the marginal gap is $0.81/clip, so the
-volume is absorbed by **~11 clips/month**.
+| | Cost | Note |
+|---|---|---|
+| **Ours** | **$0.325** | |
+| WaveSpeed 480p | $0.540 | 10×$0.05 + $0.02 + $0.02 |
+| **kie.ai 768p** | **$1.125** | audio and first 5 images free |
+| WaveSpeed 768p | $1.290 | 10×$0.125 + $0.02 + $0.02 |
+
+**kie.ai beats WaveSpeed on Ref2VA** despite losing on I2V, because WaveSpeed charges a
+premium for the reference-to-video endpoint ($0.125 vs $0.10) *and* meters audio. If
+Ref2VA is a large share of the workload, that reverses the provider choice.
+
+## Break-even, including the $8.40/month volume
+
+| Against | 5 s clips | 10 s clips |
+|---|---|---|
+| WaveSpeed 480p | **never** — cheaper than our marginal cost | ~112/month |
+| WaveSpeed 768p | ~36/month | ~12/month |
+| kie.ai 768p | ~28/month | ~11/month |
+
+Longer clips shift break-even down sharply, because our fixed staging cost amortises while
+provider pricing stays linear.
+
+## Why our per-second cost falls and theirs does not
+
+Roughly **250 s of every job** stages 50–62 GiB of weights off the network volume before
+sampling begins; only the remainder scales with clip length. So our per-second cost drops
+from $0.052 at 5 s to $0.029 at 15 s, while every provider charges a flat rate per second
+forever. This is also why `scripts/pipeline.py` batches: several clips on one warm worker
+pay that 250 s once rather than once each.
 
 ## What the money does not capture
 
-**In kie.ai's favour**
+**For the providers**
 
-- **True 2K.** We cannot produce it. Our ceiling is a 768 px short edge (1.03 MP), and in
-  practice 640×1120 because the 55.88 GiB RAM tier cannot hold the full checkpoint at
-  larger canvases. Their 2K at $0.1825/s has no equivalent here at any price.
+- **True 2K is unreachable here at any price.** The open checkpoint is 768p-class;
+  MiniMax's 2K comes from `H3-Regenerate-2K`, never open-sourced. Our 1080×1920 is a
+  640×1120 render upscaled with Real-ESRGAN.
 - **No capacity risk.** We were throttled waiting for 5090s twice on 2026-08-09, once for
-  ~30 minutes. Throttling does not bill, but it does block.
-- **No operational burden.** Of ~11 job attempts on 2026-08-09, 6 failed — OOMs, a
-  poisoned queue, a crash-looping worker. Roughly $0.90 of the day's $2.24 bought nothing.
-  That was experimentation rather than steady state, but it is the real cost of owning it.
-- **No standing fee**, no volume to keep populated, no image to rebuild.
+  ~30 minutes.
+- **No operational burden.** 6 of ~11 job attempts that day failed — OOMs, a poisoned
+  queue, a crash-looping worker — and ~$0.90 of the day's $2.24 bought nothing.
+- **No standing fee.**
 
-**In our favour**
+**For self-hosting**
 
-- **Marginal cost collapses at volume** — $0.309/clip at 200/month, half their price.
-- **Total control**: seeds, prompts, samplers, EasyCache, frame counts, checkpoints. The
-  stitched 14.58 s clip and the 10.13 s Ref2VA were only possible because we could pick
-  frame counts on the 17k+5 grid and chain conditioning frames.
-- **Upscaling is free** — Real-ESRGAN on the local RTX 3060 costs nothing per clip.
-- **No per-clip cost on failures** beyond GPU seconds; a rejected take costs ~$0.22, not
-  a full-price generation.
+- **Marginal cost collapses at volume and length** — $0.421 for 14.58 s against $1.50.
+- **Total control**: seeds, samplers, EasyCache, frame counts on the 17k+5 grid, chained
+  conditioning frames. The stitched 14.58 s clip is not something an endpoint exposes.
+- **Upscaling is free** on the local RTX 3060.
+- **Rejected takes cost ~$0.27, not full price.**
 
 ## Recommendation
 
-**Use both, split by job.**
+1. **Move Ref2VA to kie.ai** for one-offs — free audio makes it the cheapest hosted route
+   for our exact use case.
+2. **Use WaveSpeed for hosted I2V** — 11% under kie.ai at 768p, 23% under at 2K, and it is
+   the only one offering 480p.
+3. **Self-host for volume above ~30 clips/month and for anything over 10 s**, always
+   batched.
+4. **If volume will stay under ~30 clips/month, delete the network volume** ($8.40/month)
+   and buy from WaveSpeed. Two 5 s clips a month costs $1.00 hosted against $8.93 self-hosted.
 
-- **kie.ai for anything needing 2K**, for one-off or low-volume work, and for bursts where
-  our 5090 capacity is throttled. Below ~27 clips/month it is simply cheaper, and it is
-  the only route to genuine 2K.
-- **Self-host for volume and for long clips**, where the fixed staging cost amortises and
-  the 2.2–3.9× gap compounds. Always batch through `scripts/pipeline.py`.
-
-A concrete reality check: the two delivered clips on 2026-08-09 (5.17 s I2V + 10.13 s
-Ref2VA) would have cost **$1.72** on kie.ai at 768p. Their marginal cost here was
-**$0.59** — but the day actually billed **$2.24** because of the experimentation around
-them. Steady state favours us; discovery does not.
-
-If the volume is not going to reach ~27 clips/month, the honest move is to delete the
-network volume ($8.40/month) and buy from kie.ai.
+Reality check: the two clips delivered on 2026-08-09 (5.17 s I2V + 10.13 s Ref2VA) would
+have cost **$1.63** on WaveSpeed 768p, **$1.69** on kie.ai, or **$0.74** on WaveSpeed 480p.
+Their marginal cost here was **$0.59** — but the day billed **$2.24** including the
+experimentation around them.
 
 ## Sources and caveats
 
-- kie.ai pricing read directly from <https://kie.ai/pricing> on 2026-08-10. It blocks
-  automated fetches (HTTP 403); figures were read from the rendered page.
-- Third-party cross-check: WaveSpeed quotes MiniMax H3 2K at $0.13/s, *below* kie.ai's
-  $0.1825/s — so kie.ai is not the cheapest reseller and the market is worth re-checking
-  before committing.
-- Our $1.585/hr is measured from billing records, not the advertised pod rate (which is
-  $0.69/hr — serverless bills 2.30× that).
-- The 1.241 overhead multiplier comes from a single day that included heavy
-  experimentation; a steadier day would land closer to the floor.
-- Prices on both sides move. Re-derive before making a standing commitment.
+- kie.ai read from <https://kie.ai/pricing> (blocks automated fetches; read from the
+  rendered page). WaveSpeed read from the live model pages.
+- **The WaveSpeed blog is stale**: it quotes 2K at $0.13/s and reference video at $0.09/s;
+  the live model pages say **$0.14** and **$0.125**. Trust the model pages.
+- Provider durations are integer seconds (WaveSpeed supports 4–15). Our clips are 5.17 /
+  10.13 / 14.58 s off the 17k+5 grid; provider columns use nominal 5 / 10 / 15.
+- The 1.241 overhead multiplier comes from a single heavy-experimentation day; a steadier
+  day lands nearer the floor ($0.215 / $0.262 / $0.339).
+- Neither provider publishes bulk discounts. Prices on all three sides move — re-derive
+  before any standing commitment.
