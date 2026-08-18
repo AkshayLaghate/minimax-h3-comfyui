@@ -168,7 +168,7 @@
         0
       ],
       "fps": 24,
-      "bit_depth": 8
+      "bit_depth": 10
     }
   },
   "14": {
@@ -180,7 +180,9 @@
       ],
       "filename_prefix": "video/MiniMax_H3_ref2va10s",
       "format": "auto",
-      "codec": "auto"
+      "codec": "h264",
+      "codec.encoding": "re-encode",
+      "codec.encoding.crf": 12.0
     }
   },
   "20": {
