@@ -22,8 +22,42 @@ Endpoint URL: `https://api.runpod.ai/v2/t9u2wy8o9ucnpz/run`
 
 The deployment originally sat in CA-MTL-3, which offered only two serverless GPU types and
 whose A100 host was broken (see below). Moving to EU-RO-1 unlocked the RTX 5090 and cut
-per-clip cost by more than half. EU-RO-1 also carries RTX PRO 6000 Blackwell and
-A100-SXM4-80GB as fallbacks if 5090 capacity tightens.
+per-clip cost by more than half.
+
+### GPU supply in EU-RO-1 (checked 2026-08-10)
+
+The network volume cannot move between datacenters, so EU-RO-1's stock is a hard limit.
+
+| GPU | Pool | VRAM | Supply | Serverless |
+|---|---|---|---|---|
+| RTX 5090 | `ADA_32_PRO` | 32 GB | **LOW** | $1.58/hr |
+| RTX PRO 6000 Blackwell | `BLACKWELL_96` | 96 GB | **LOW** | $3.49/hr |
+| RTX 4090 | `ADA_24` | 24 GB | MEDIUM | $1.10/hr |
+
+**Correction:** an earlier version of this file listed A100-SXM4-80GB as an EU-RO-1
+fallback. It is not there — A100 SXM is US-only (US-KS-2 / US-MD-1 / US-WA-1).
+
+The 4090 has the best supply and is the one card that makes things worse: 24 GB of VRAM
+spills ~7.4 GiB more to host RAM than the 5090 does, which alone would consume the 55.88 GiB
+tier before any activations. It is also memory-bandwidth-bound at 1008 vs 1792 GB/s, so it
+only breaks even below 1.44x slower — unlikely.
+
+**`BLACKWELL_96` was therefore added as a fallback pool** (2026-08-10): a second chance at
+capacity, and its 96 GB VRAM holds the whole 62.39 GiB weight set with no spilling, which
+is the only route here to unpruned Ref2VA or 768x1344. It costs 2.20x the rate but is
+1.36x faster, so ~1.62x per clip — only when the 5090 is unavailable.
+
+Two operational notes:
+
+1. **Watch which pool actually gets picked.** RunPod's selection policy between pools is
+   undocumented; if it prefers Blackwell when both are free, every job costs 62% more.
+2. **`PATCH gpuPoolIds` silently reset `workersMax` from 1 to 3.** Three workers would each
+   stage weights separately, defeating `scripts/pipeline.py`'s batching and tripling the
+   billing exposure. Always re-assert `workersMax` after changing pools.
+
+Better 5090 supply exists in **EUR-IS-2 (MEDIUM)**. Moving there means a new volume
+($8.40/month) and re-downloading ~96 GiB — minutes with `hf_transfer` at ~620 MB/s, against
+~69 MB/s for single-stream `curl`.
 
 ## Volume contents
 
