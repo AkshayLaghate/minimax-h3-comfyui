@@ -55,7 +55,7 @@ NATIVE_MAX_PIXELS = 768 * 1344
 # naming anything else shows up as an empty loader dropdown on the worker.
 ON_VOLUME = {
     "minimax_h3_fl2va_int8_convrot.safetensors",
-    "minimax_h3_ref2va_pruned_int8_convrot.safetensors",
+    "minimax_h3_ref2va_int8_convrot.safetensors",
     "qwen3vl_32b_minimax_h3_int8_convrot.safetensors",
     "minimax_h3_video_vae_fp16.safetensors",
     "minimax_h3_audio_vae_fp32.safetensors",
