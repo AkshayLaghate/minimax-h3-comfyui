@@ -524,6 +524,51 @@ tensors. `RealESRGAN_x2plus.pth` is on the volume (67,061,725 bytes) but unused;
 happens in `scripts/upscale-esrgan.py`, which reimplements RRDBNet against plain torch so
 no basicsr/spandrel dependency is needed.
 
+### The master encode: `codec: auto` throws away ~8% of the model's detail
+
+`SaveVideo`'s default `codec: "auto"` is a lossy H.264 encode at whatever bitrate ffmpeg
+picks, and it picks low. Quality control lives behind a DynamicCombo that `auto` bypasses:
+
+    "codec": "h264", "codec.encoding": "re-encode", "codec.encoding.crf": 16.0
+
+Wire names are dot-prefixed by the parent input id — the same scheme as Ref2VA's
+`ref_images.ref_image_0`, traced through `comfy_api/latest/_io.py` rather than guessed.
+
+**Measured, 640x1120 / 124 frames, seed 7, full FL2VA, `bit_depth` 8 — only `crf` differs,
+so the sampler output is bit-identical and every delta below is the encode:**
+
+| Master | Mbps | bits/pixel | File | Sharpness | Shimmer | ref_delta |
+|---|---|---|---|---|---|---|
+| `codec: auto` | 2.76 | 0.160 | 1.9 MB | 418.0 | 0.1578 | 9.6 |
+| **`crf 16`** | 7.36 | **0.428** | 4.8 MB | **450.2** | **0.1469** | 9.6 |
+
+Identical `ref_delta` confirms the two clips are one generation. Mean absolute difference
+is 2.89/255, concentrated in textured regions rather than at block edges.
+
+**Sharpness up 7.7% while shimmer falls 6.9%** — the signature of recovered detail, not
+added noise. It is the exact inverse of the pruned-FL2VA result below (+66% sharpness with
++41% bitrate and worse shimmer), and it cannot be anything else: a re-encode of identical
+frames can only discard less, never invent more. So `auto` was destroying ~8% of what the
+model produced, every run, before the upscale ever saw it.
+
+After the local ESRGAN upscale the advantage survives but dilutes, because the 1.69x
+resample is itself a low-pass:
+
+| 1080x1920 deliverable | Mbps | Sharpness | Shimmer |
+|---|---|---|---|
+| from `auto` master | 16.49 | 225.3 | 0.0755 |
+| from `crf 16` master | 17.99 | **231.7** | **0.0696** |
+
+**What is NOT established:** crf 16 against crf 12. The only crf 12 clip is 768x1344 with
+different content (1.093 bpp there, 2.6x crf 16's bits), so the two cannot be compared —
+the same content-mismatch trap that invalidated an earlier auto-vs-crf12 figure. What is
+known is that crf 12 preserves the model's chromatic fringing along with the detail; crf 16
+sits between that and `auto` at a quarter of `auto`'s loss. Deciding 12 vs 16 needs one
+matched pair, not a metric read across clips.
+
+The intermediate file grows 1.9 -> 4.8 MB. It is deleted after the upscale, so the cost is
+zero.
+
 ### Pruned FL2VA is NOT interchangeable with the full checkpoint
 
 The pruned Ref2VA is documented above as visually indistinguishable. **That does not
@@ -766,6 +811,31 @@ The same RTX 5090 type in the same datacenter reported **55.88 GiB** on one host
 smaller host. Treat long clips and unpruned checkpoints as **not reliably schedulable**:
 they depend which machine the worker lands on. This is also why pruned Ref2VA is the right
 default even though the unpruned one would fit on a large-RAM host.
+
+### `workersMax: 1` does not mean one worker
+
+Both CRF runs on 2026-08-18 spawned **three** workers against a `max: 1` endpoint — one
+RUNNING, two THROTTLED — with `GET /endpoints/{id}` reporting `max: 1` throughout. The
+first of those runs then died at 246.8 s with:
+
+```
+WebSocket communication error: ComfyUI HTTP unreachable during websocket reconnect
+```
+
+No OOM line preceded it, and 640x1120 / 124 frames sits ~53 GiB against the 55.88 GiB tier
+with the full checkpoint — inside the budget it has completed on before. The likeliest
+reading is the scaler reaping surplus workers and taking the one holding the job, but the
+container log buffer was empty by the time it was queried, so **the mechanism is not
+established.** The retry, submitted after draining to `workersMax: 0` and back, completed
+in 506.0 s. Cost of the failed attempt: $0.109.
+
+Two operational consequences:
+
+- **Drain to 0 and wait for `total: 0` before resubmitting after any failure.** A PATCH
+  straight back to 1 returned `409 ENDPOINT_PAUSED (max_workers=0)` on the next `/run` —
+  the config read and the scheduler's view disagree for a while. PATCH twice and verify.
+- **THROTTLED workers do not bill**, so the surplus is mostly harmless; a surplus stuck in
+  INITIALIZING does bill.
 
 ## S3 output (Cloudflare R2)
 
