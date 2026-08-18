@@ -103,6 +103,43 @@ endpoint whose template's `dockerStartCmd` does the work and then sleeps, watch 
 (~620 MB/s to the volume). Worth retrying a plain Pod first — the broken host may be
 repaired.
 
+## Fetching a model onto the volume — use `hf_transfer`, not `curl`
+
+```
+image : python:3.11-slim        pool: cheapest available (the GPU does nothing here)
+args  : pip install --quiet --no-cache-dir 'huggingface_hub<1.0' hf_transfer
+        export HF_HUB_ENABLE_HF_TRANSFER=1
+        hf download <repo> <path> --local-dir /runpod-volume/models
+        rm -rf /runpod-volume/models/.cache
+```
+
+**Measured 2026-08-18: 34 GB in 73 s (~466 MB/s).** Single-stream `curl` managed 43–111 MB/s
+on the same file. `scripts/populate-volume.sh` already used this; reaching for `curl`
+instead cost ~$0.59 across three failed attempts.
+
+Five traps, all hit in one session:
+
+1. **Never use a GPU pool for a file copy.** `cpu3c` at 2 vCPU is $0.072/hr against the
+   5090's $1.585 — **22x cheaper**. Four fetches on GPU pools wasted ~$0.60, 23% of a day's
+   bill. (The create-endpoint tool only exposes `gpuPoolIds`, so provisioning a true CPU
+   endpoint needs a different API path; failing that, pick the cheapest GPU — `ADA_24`.)
+2. **RunPod recycles the container about every 9 minutes.** Our alpine container is not a
+   job handler, so the supervisor stops and recreates it. Anything that takes longer than
+   one container lifetime gets cut off — which is why a 34 GB `curl` never finished.
+3. **`curl -o` does not resume.** Every recycle restarted the download from zero. `-C -`
+   fixes it, but **only with `-L`** — without it curl sends the Range to huggingface.co,
+   receives a 302 rather than a 206, and reports "server does not seem to support byte
+   ranges". `hf download` resumes natively and sidesteps this entirely.
+4. **Make the command idempotent.** A container that unconditionally downloads will
+   re-download on every recycle. Guard on the exact byte size first, or accept that the
+   fetch runs repeatedly.
+5. **Keep the trailing `sleep` short.** It exists only to hold the container open long
+   enough to read logs; `sleep 900` bills 15 minutes of GPU per pass for nothing. 60–90 s
+   is plenty.
+
+Assert the exact byte size afterwards. A truncated download otherwise surfaces as a
+baffling safetensors parse error on a live worker.
+
 ## Verified smoke test
 
 640×384, 124 frames, 20 steps, `res_multistep` — returned as base64 (no S3 yet):
